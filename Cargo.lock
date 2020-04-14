@@ -180,6 +180,7 @@ name = "gpgpu"
 version = "0.1.0"
 dependencies = [
  "ocl",
+ "serde",
 ]
 
 [[package]]

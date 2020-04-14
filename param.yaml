@@ -1,5 +1,11 @@
 data_files: [param_temp]
 actions:
-  - Update: {At: {Fm: 0.0}}
+  - [Moments, {Every: {Fm: 100}}]
+  - [Correlation, {Every: {Fm: 100}}]
+  - [StaticStructureFactor, {Every: {Fm: 100}}]
+config:
+  max: {Fm: 1000}
+  dim: {D3: [4,4,4]}
+  dirs: [X,Y,Z]
 symbols:
   Sympy: aoeu
