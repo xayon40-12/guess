@@ -1,4 +1,5 @@
-data_files: [param_temp.txt]
-eq_diff: u = u
+data_files: [param_temp]
 actions:
-    - Update: {At: {Fm: 0.0}}
+  - Update: {At: {Fm: 0.0}}
+symbols:
+  Sympy: aoeu
