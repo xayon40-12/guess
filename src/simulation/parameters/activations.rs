@@ -19,7 +19,8 @@ impl Counting {
 #[derive(Deserialize,Serialize,Debug)]
 pub enum Repetition {
     At(Counting),
-    Every(Counting)
+    Every(Counting),
+    Interval{from: Counting, to: Counting, by: Counting},
 }
 pub use Repetition::*;
 
@@ -35,6 +36,10 @@ impl Repetition {
             Every(c) => {
                 let c: usize = c.convert(dt);
                 Box::new(move |count| count % c == 0)
+            },
+            Interval{from,to,by} => {
+                let (f,t,b): (usize,usize,usize) = (from.convert(dt),to.convert(dt),by.convert(dt));
+                Box::new(move |c| f<=c && c<=t && c%b == 0)
             }
         }
     }

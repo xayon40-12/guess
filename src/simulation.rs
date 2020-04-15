@@ -27,18 +27,16 @@ impl Simulation {
         let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).unwrap();
         println!("param:\n{:?}", &param);
 
-        let mut handler = Handler::builder()?
-            .load_all_algorithms()
-            .load_kernel_named("philox4x32_10_normal","noise");
+        let mut handler = Handler::builder()?;
 
         for f in &param.data_files {
-            handler = handler.load_data(f,Format::Column(&std::fs::read_to_string(format!("{}.txt",f)).expect(&format!("Could not find data file \"{}\".", file_name))),false,None); //TODO autodetect format from file extension
+            let name = if let Some(i) = f.find('.') { &f[..i] } else { f };
+            let name = if let Some(i) = name.rfind('/') { &name[i+1..] } else { name };
+            handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(f).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
         }
 
         let (handler,vars) = extract_symbols(handler, &param)?;
         let callbacks = param.actions.iter().map(|(c,a)| (a.to_activation(vars.dt),c.to_callback())).collect();
-        let mut handler = handler.build()?;
-        handler.set_arg("noise",&[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
 
         Ok(Simulation { handler, callbacks, vars })
     }
@@ -64,7 +62,7 @@ impl Simulation {
     }
 }
 
-fn extract_symbols<'a>(mut h: HandlerBuilder<'a>, param: &'a Param) -> gpgpu::Result<(HandlerBuilder<'a>,Vars)> {
+fn extract_symbols<'a>(mut h: HandlerBuilder<'a>, param: &'a Param) -> gpgpu::Result<(Handler,Vars)> {
 
     let dt = 0.1;
     let dim = param.config.dim;
@@ -86,8 +84,18 @@ fn extract_symbols<'a>(mut h: HandlerBuilder<'a>, param: &'a Param) -> gpgpu::Re
     h = h.add_buffer("sum", Len(F64(0.0), len));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum));
     h = h.add_buffer("moments", Len(F64(0.0), 4));
+    h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0].into()), len));
     h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0].into()), len));
     h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0].into()), len));
+    h = h.load_all_algorithms();
+    h = h.load_kernel_named("philox4x32_10_normal","noise");
+    h = h.load_kernel("complex_from_real");
+    h = h.load_kernel("kc_sqrmod");
+
+    let mut h = h.build()?;
+    h.set_arg("noise", &[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
+    h.set_arg("complex_from_real", &[BufArg("u","src"),BufArg("srcFFT","dst")])?;// WARNING these kernel args must not be changed
+    h.set_arg("kc_sqrmod", &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;// WARNING these kernel args must not be changed
 
     Ok((h,Vars { max_count, dim, dirs, dt, len }))
 }

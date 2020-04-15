@@ -1,8 +1,8 @@
-data_files: [param_temp]
+data_files: [target/param_temp.txt]
 actions:
   - [Moments, {Every: {Fm: 100}}]
   - [Correlation, {Every: {Fm: 100}}]
-  - [StaticStructureFactor, {Every: {Fm: 100}}]
+  - [StaticStructureFactor, {Interval: {from: {Fm: 10}, to: {Fm: 40}, by: {Fm: 3}}}]
 config:
   max: {Fm: 1000}
   dim: {D3: [4,4,4]}
