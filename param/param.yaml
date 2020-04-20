@@ -1,4 +1,4 @@
-data_files: [target/param_temp.txt]
+data_files: [param/param_temp.txt]
 actions:
   - [Moments, {Every: {Fm: 100}}]
   - [Correlation, {Every: {Fm: 100}}]
