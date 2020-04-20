@@ -1,7 +1,7 @@
 use gpgpu::{Handler,handler::HandlerBuilder};
 use gpgpu::data_file::Format;
 use gpgpu::{Dim::{self,*},DimDir};
-use gpgpu::descriptors::{Type::*,BufferConstructor::*,KernelArg::*};
+use gpgpu::descriptors::{Types::*,BufferConstructor::*,KernelArg::*};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,10 +48,10 @@ impl Simulation {
 
             self.handler.run("noise", D1(len))?;
 
-            self.handler.copy::<f64>("noise","u")?;
+            self.handler.copy("noise","u")?;
             //self.handler.run_arg("simu", dim, &[Param("t", F64(t))])?;
 
-            for (activator,callback) in &self.callbacks {
+            for (activator,callback) in &mut self.callbacks {
                 if activator(c) {
                     callback(&mut self.handler, &self.vars, t)?;
                 }
@@ -62,7 +62,7 @@ impl Simulation {
     }
 }
 
-fn extract_symbols<'a>(mut h: HandlerBuilder<'a>, param: &'a Param) -> gpgpu::Result<(Handler,Vars)> {
+fn extract_symbols<'a>(mut h: HandlerBuilder, param: &'a Param) -> gpgpu::Result<(Handler,Vars)> {
 
     let dt = 0.1;
     let dim = param.config.dim;
@@ -87,15 +87,15 @@ fn extract_symbols<'a>(mut h: HandlerBuilder<'a>, param: &'a Param) -> gpgpu::Re
     h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0].into()), len));
     h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0].into()), len));
     h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0].into()), len));
+    h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0].into()), len));
     h = h.load_all_algorithms();
     h = h.load_kernel_named("philox4x32_10_normal","noise");
     h = h.load_kernel("complex_from_real");
     h = h.load_kernel("kc_sqrmod");
+    h = h.load_kernel("kc_times");
 
     let mut h = h.build()?;
     h.set_arg("noise", &[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
-    h.set_arg("complex_from_real", &[BufArg("u","src"),BufArg("srcFFT","dst")])?;// WARNING these kernel args must not be changed
-    h.set_arg("kc_sqrmod", &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;// WARNING these kernel args must not be changed
 
     Ok((h,Vars { max_count, dim, dirs, dt, len }))
 }

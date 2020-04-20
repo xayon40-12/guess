@@ -3,6 +3,7 @@ actions:
   - [Moments, {Every: {Fm: 100}}]
   - [Correlation, {Every: {Fm: 100}}]
   - [StaticStructureFactor, {Interval: {from: {Fm: 10}, to: {Fm: 40}, by: {Fm: 3}}}]
+  - [DynamicStructureFactor, {TotalInterval: {from: {Fm: 10}, to: {Fm: 40}, total: 7}}]
 config:
   max: {Fm: 1000}
   dim: {D3: [4,4,4]}

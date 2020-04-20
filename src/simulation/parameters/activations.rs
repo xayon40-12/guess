@@ -21,6 +21,7 @@ pub enum Repetition {
     At(Counting),
     Every(Counting),
     Interval{from: Counting, to: Counting, by: Counting},
+    TotalInterval{from: Counting, to: Counting, total: usize},
 }
 pub use Repetition::*;
 
@@ -40,7 +41,12 @@ impl Repetition {
             Interval{from,to,by} => {
                 let (f,t,b): (usize,usize,usize) = (from.convert(dt),to.convert(dt),by.convert(dt));
                 Box::new(move |c| f<=c && c<=t && c%b == 0)
-            }
+            },
+            TotalInterval{from,to,total} => {
+                let (f,t,tot): (usize,usize,usize) = (from.convert(dt),to.convert(dt),*total);
+                let b = (t-f)/tot;
+                Box::new(move |c| f<=c && c<=t && c%b == 0)
+            },
         }
     }
 }
