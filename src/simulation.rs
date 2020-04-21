@@ -8,12 +8,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod parameters;
 pub use parameters::{actions::Callback,activations::ActivationCallback,Param};
 
+pub struct DataBuffer {
+    name: String,
+    vector_dim: usize,
+}
+
 pub struct Vars {
-    max_count: usize,
-    dim: Dim,
-    dirs: Vec<DimDir>,
-    dt: f64,
-    len: usize,
+    pub max_count: usize,
+    pub dim: Dim,
+    pub dirs: Vec<DimDir>,
+    pub dt: f64,
+    pub len: usize,
+    pub data_buffers: Vec<DataBuffer>,
 }
 
 pub struct Simulation {
@@ -42,11 +48,13 @@ impl Simulation {
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
-        let Vars {max_count, dim: _, dirs: _, dt, len} = self.vars;
+        let Vars {max_count, dim, dirs: _, dt, len, data_buffers: _} = self.vars;
+        let noise_dim = D1(len*dim.len());
+
         for c in 0..max_count {
             let t = c as f64*dt;
 
-            self.handler.run("noise", D1(len))?;
+            self.handler.run("noise", noise_dim)?;
 
             self.handler.copy("noise","u")?;
             //self.handler.run_arg("simu", dim, &[Param("t", F64(t))])?;
@@ -77,9 +85,10 @@ fn extract_symbols<'a>(mut h: HandlerBuilder, param: &'a Param) -> gpgpu::Result
 
     let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
-    h = h.add_buffer("srcnoise", Len(U64(time),len));
-    h = h.add_buffer("noise", Len(F64(0.0),len));
-    h = h.add_buffer("u", Len(F64(0.0), len));
+    let noise_len = len*dim.len();
+
+    h = h.add_buffer("srcnoise", Len(U64(time),noise_len));
+    h = h.add_buffer("noise", Len(F64(0.0),noise_len));
     h = h.add_buffer("tmp", Len(F64(0.0), len));
     h = h.add_buffer("sum", Len(F64(0.0), len));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum));
@@ -94,8 +103,13 @@ fn extract_symbols<'a>(mut h: HandlerBuilder, param: &'a Param) -> gpgpu::Result
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
 
+    let mut data_buffers = vec![DataBuffer{name:"u".into(),vector_dim:1}];//TODO load the names from the parameters
+    for db in &data_buffers {
+        h = h.add_buffer(&db.name, Len(F64(0.0), len*db.vector_dim));
+    }
+
     let mut h = h.build()?;
     h.set_arg("noise", &[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
 
-    Ok((h,Vars { max_count, dim, dirs, dt, len }))
+    Ok((h,Vars { max_count, dim, dirs, dt, len, data_buffers }))
 }
