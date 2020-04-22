@@ -5,10 +5,13 @@ use gpgpu::Dim;
 use gpgpu::DimDir;
 
 pub mod actions;
+pub use actions::Callback;
 pub mod activations;
-use activations::Counting;
+pub use activations::ActivationCallback;
 pub mod symbols;
 use symbols::SymbolsType;
+pub mod integrators;
+pub use integrators::Integrator;
 
 #[derive(Deserialize,Serialize,Debug)]
 pub struct Param {
@@ -16,11 +19,12 @@ pub struct Param {
     pub actions: Vec<(Action,Repetition)>,
     pub symbols: SymbolsType,
     pub config: Config,
+    pub integrators: Vec<Integrator>,
 }
 
 #[derive(Deserialize,Serialize,Debug)]
 pub struct Config {
-    pub max: Counting,
+    pub max: f64,
     pub dim: Dim,
     pub dirs: Vec<DimDir>,
 }

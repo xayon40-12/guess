@@ -6,7 +6,7 @@ use gpgpu::descriptors::{Types::*,BufferConstructor::*,KernelArg::*};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
-pub use parameters::{actions::Callback,activations::ActivationCallback,Param};
+pub use parameters::{Callback,ActivationCallback,Param,Integrator};
 
 pub struct DataBuffer {
     name: String,
@@ -14,10 +14,9 @@ pub struct DataBuffer {
 }
 
 pub struct Vars {
-    pub max_count: usize,
+    pub max: f64,
     pub dim: Dim,
     pub dirs: Vec<DimDir>,
-    pub dt: f64,
     pub len: usize,
     pub data_buffers: Vec<DataBuffer>,
 }
@@ -26,6 +25,7 @@ pub struct Simulation {
     handler: Handler,
     callbacks: Vec<(ActivationCallback,Callback)>,
     vars: Vars,
+    integrators: Vec<Integrator>,
 }
 
 impl Simulation {
@@ -41,26 +41,24 @@ impl Simulation {
             handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(f).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
         }
 
-        let (handler,vars) = extract_symbols(handler, &param)?;
-        let callbacks = param.actions.iter().map(|(c,a)| (a.to_activation(vars.dt),c.to_callback())).collect();
-
-        Ok(Simulation { handler, callbacks, vars })
+        extract_symbols(handler, param)
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
-        let Vars {max_count, dim, dirs: _, dt, len, data_buffers: _} = self.vars;
+        let Vars {max, dim, dirs: _, len, data_buffers: _} = self.vars;
         let noise_dim = D1(len*dim.len());
 
-        for c in 0..max_count {
-            let t = c as f64*dt;
-
+        let dt = 0.1;//TODO remove
+        let mut t = 0.0;
+        while t<max {
             self.handler.run("noise", noise_dim)?;
 
             self.handler.copy("noise","u")?;
             //self.handler.run_arg("simu", dim, &[Param("t", F64(t))])?;
 
+            t += dt;//TODO make t evolve with the integration algorithm
             for (activator,callback) in &mut self.callbacks {
-                if activator(c) {
+                if activator(t) {
                     callback(&mut self.handler, &self.vars, t)?;
                 }
             }
@@ -70,12 +68,11 @@ impl Simulation {
     }
 }
 
-fn extract_symbols<'a>(mut h: HandlerBuilder, param: &'a Param) -> gpgpu::Result<(Handler,Vars)> {
+fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulation> {
 
-    let dt = 0.1;
     let dim = param.config.dim;
     let dirs = param.config.dirs.clone();
-    let max_count = param.config.max.convert(dt);
+    let max = param.config.max;
 
     let dims: [usize;3] = dim.into();
     let mut sumdims = dims.clone();
@@ -103,13 +100,17 @@ fn extract_symbols<'a>(mut h: HandlerBuilder, param: &'a Param) -> gpgpu::Result
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
 
-    let mut data_buffers = vec![DataBuffer{name:"u".into(),vector_dim:1}];//TODO load the names from the parameters
+    let data_buffers = vec![DataBuffer{name:"u".into(),vector_dim:1}];//TODO load the names from the parameters
     for db in &data_buffers {
         h = h.add_buffer(&db.name, Len(F64(0.0), len*db.vector_dim));
     }
 
-    let mut h = h.build()?;
-    h.set_arg("noise", &[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
+    let mut handler = h.build()?;
+    handler.set_arg("noise", &[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
 
-    Ok((h,Vars { max_count, dim, dirs, dt, len, data_buffers }))
+    let vars = Vars { max, dim, dirs, len, data_buffers };
+    let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
+    let integrators = param.integrators;
+
+    Ok(Simulation { handler, callbacks, vars, integrators })
 }
