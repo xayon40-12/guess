@@ -1,13 +1,9 @@
 use serde::{Deserialize,Serialize};
+use gpgpu::integrators::SPDE;
 
-#[derive(Deserialize,Serialize,Debug)]
-pub enum SymbolsType {
-    Rust(Vec<RustSymbols>),
-    Sympy(String)
-}
-
-#[derive(Deserialize,Serialize,Debug)]
-pub enum RustSymbols {
-    Function(String),
-    Main(String),
+#[derive(Deserialize,Serialize,Debug,Clone)]
+pub enum SymbolsTypes {
+    Constant{ name: String, value: f64 },
+    Function{ name: String, args: Vec<String>, indx_args: Option<Vec<String>>, src: String },
+    PDEs{ pdes: Vec<SPDE>, initial_conditions_file: Option<String> },
 }

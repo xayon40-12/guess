@@ -9,7 +9,7 @@ pub use actions::Callback;
 pub mod activations;
 pub use activations::ActivationCallback;
 pub mod symbols;
-use symbols::SymbolsType;
+pub use symbols::SymbolsTypes;
 pub mod integrators;
 pub use integrators::Integrator;
 
@@ -17,14 +17,14 @@ pub use integrators::Integrator;
 pub struct Param {
     pub data_files: Vec<String>,
     pub actions: Vec<(Action,Repetition)>,
-    pub symbols: SymbolsType,
+    pub symbols: Vec<SymbolsTypes>,
     pub config: Config,
     pub integrators: Vec<Integrator>,
 }
 
 #[derive(Deserialize,Serialize,Debug)]
 pub struct Config {
-    pub max: f64,
+    pub t_max: f64,
     pub dim: Dim,
     pub dirs: Vec<DimDir>,
 }
