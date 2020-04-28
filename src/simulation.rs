@@ -8,24 +8,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod parameters;
 pub use parameters::{Callback,ActivationCallback,Param,Integrator,SymbolsTypes};
 
-pub struct DataBuffer {
-    name: String,
-    vector_dim: usize,
-}
-
 pub struct Vars {
     pub t_max: f64,
     pub dim: Dim,
     pub dirs: Vec<DimDir>,
     pub len: usize,
-    pub data_buffers: Vec<DataBuffer>,
+    pub dvars: Vec<String>,
 }
 
 pub struct Simulation {
     handler: Handler,
     callbacks: Vec<(ActivationCallback,Callback)>,
     vars: Vars,
-    integrators: Vec<Integrator>,
 }
 
 impl Simulation {
@@ -45,10 +39,9 @@ impl Simulation {
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
-        let Vars {t_max, dim, dirs: _, len, data_buffers: _} = self.vars;
+        let Vars {t_max, dim, dirs: _, len, ref dvars} = self.vars;
         let noise_dim = D1(len*dim.len());
-
-        let dt = 0.1;//TODO remove
+        let dvars = dvars.iter().map(|i| &i[..]).collect::<Vec<_>>();
 
         let mut t = 0.0;
         for (activator,callback) in &mut self.callbacks {
@@ -59,10 +52,8 @@ impl Simulation {
         while t<t_max {
             self.handler.run("noise", noise_dim)?;
 
-            self.handler.copy("noise","u")?;
-            //self.handler.run_arg("simu", dim, &[Param("t", F64(t))])?;
+            t = *self.handler.run_algorithm("integrator",dim,&[],&dvars[..],Some(&(t,vec![("t".to_string(),F64(t))])))?.unwrap().downcast_ref::<f64>().unwrap();
 
-            t += dt;//TODO make t evolve with the integration algorithm
             for (activator,callback) in &mut self.callbacks {
                 if activator(t) {
                     callback(&mut self.handler, &self.vars, t)?;
@@ -76,11 +67,11 @@ impl Simulation {
 
 fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulation> {
 
-    let dim = param.config.dim;
+    let (dims,phy) = param.config.dim.into();
+    let dim: Dim = dims.into();
     let dirs = param.config.dirs.clone();
     let t_max = param.config.t_max;
 
-    let dims: [usize;3] = dim.into();
     let mut sumdims = dims.clone();
     dirs.iter().for_each(|d| sumdims[*d as usize] = 1);
     let len = dims[0]*dims[1]*dims[2];
@@ -88,10 +79,10 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
 
     let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
-    let noise_len = len*dim.len();
+    let noise_len = len*dim.len();//TODO change so that it correspond to the pdes
 
-    h = h.add_buffer("srcnoise", Len(U64(time),noise_len));
-    h = h.add_buffer("noise", Len(F64(0.0),noise_len));
+    h = h.add_buffer("srcxi", Len(U64(time),noise_len));
+    h = h.add_buffer("xi", Len(F64(0.0),noise_len));
     h = h.add_buffer("tmp", Len(F64(0.0), len));
     h = h.add_buffer("sum", Len(F64(0.0), len));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum));
@@ -106,22 +97,37 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
 
-    {
+    let dvars = {
         use SymbolsTypes::*;
-        use gpgpu::integrators::SPDE;
+        use gpgpu::integrators::{create_euler_pde};
         use gpgpu::functions::SFunction;
         use std::collections::HashSet;
-        use regex::{Regex,Captures};
+        use regex::Regex;
         let mut consts_names = HashSet::new();
-        let mut consts = vec![];
+        let mut consts: Vec<Box<dyn Fn(String) -> String>> = vec![];
+        for i in 0..3 {
+            if phy[i] != 0.0 {
+                let d = phy[i]/dims[i] as f64;
+                let symb = ["dx","dy","dz"][i];
+                consts_names.insert(symb.to_string());
+                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
+                let val = format!("{:e}",d);
+                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
+                let symb = ["ivdx","ivdy","ivdz"][i];
+                consts_names.insert(symb.to_string());
+                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
+                let val = format!("{:e}",1.0/d);
+                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
+            }
+        }
         for symb in &param.symbols {
             match symb {
                 Constant{name,value} => {
-                    if consts_names.insert(name.clone()) { panic!("Each constants must have a different name, repeated name: \"{}\"", name) }
+                    if !consts_names.insert(name.clone()) { panic!("Each constants must have a different name, repeated name: \"{}\"", name) }
                     else {
-                        let re = Regex::new(&format!("^{}$",&name)).expect(&format!("Could not build regex out of {:?}.", symb));
+                        let re = Regex::new(&format!(r"\b{}\b",&name)).expect(&format!("Could not build regex out of {:?}.", symb));
                         let val = format!("{:e}",value);
-                        consts.push(Box::new(move |s: String| re.replace(&s,&val[..]).to_string()));
+                        consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
                     }
                 },
                 _ => {}
@@ -134,6 +140,7 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
             }
             s
         };
+        let mut pdes_dvars = None;
         for symb in param.symbols {
             match symb {
                 Constant{..} => {},
@@ -154,26 +161,34 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
                     });
 
                 },
-                PDEs{pdes,initial_conditions_file} => {
-                    for SPDE{dvar,expr} in pdes {
-
+                PDEs(mut pdes) => {
+                    pdes_dvars = Some(pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>());
+                    pdes.iter_mut().for_each(|mut i| i.expr = replace(i.expr.clone()));
+                    match &param.integrator {
+                        Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(vec!["xi".into()]),vec![("t".into(),CF64)])),
                     }
                 },
             }
         }
-    }
-
-    let data_buffers = vec![DataBuffer{name:"u".into(),vector_dim:1}];//TODO load the names from the parameters
-    for db in &data_buffers {
-        h = h.add_buffer(&db.name, Len(F64(0.0), len*db.vector_dim));
-    }
+        if let Some(mut dvars) = pdes_dvars {
+            dvars.iter_mut().for_each(|i| *i = format!("dvar_{}",i));
+            dvars.insert(0,"dst".to_string());
+            for dvar in &dvars {
+                h = h.add_buffer(dvar,Len(F64(0.0),len));
+            }
+            dvars.push("xi".into());
+            dvars
+        } else {
+            panic!("PDEs must be given.")
+        }
+        //TODO read initial conditions
+    };
 
     let mut handler = h.build()?;
-    handler.set_arg("noise", &[BufArg("srcnoise","src"),BufArg("noise","dst")])?;
+    handler.set_arg("noise", &[BufArg("srcxi","src"),BufArg("xi","dst")])?;
 
-    let vars = Vars { t_max, dim, dirs, len, data_buffers };
+    let vars = Vars { t_max, dim, dirs, len, dvars };
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
-    let integrators = param.integrators;
 
-    Ok(Simulation { handler, callbacks, vars, integrators })
+    Ok(Simulation { handler, callbacks, vars })
 }

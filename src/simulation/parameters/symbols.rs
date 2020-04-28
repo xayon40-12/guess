@@ -5,5 +5,5 @@ use gpgpu::integrators::SPDE;
 pub enum SymbolsTypes {
     Constant{ name: String, value: f64 },
     Function{ name: String, args: Vec<String>, indx_args: Option<Vec<String>>, src: String },
-    PDEs{ pdes: Vec<SPDE>, initial_conditions_file: Option<String> },
+    PDEs(Vec<SPDE>),
 }

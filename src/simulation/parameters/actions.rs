@@ -27,7 +27,7 @@ impl Action {
     pub fn to_callback(&self) -> Callback {
         match self {
             Moments => Box::new(|h,vars,t| {
-                h.run_algorithm("moments", vars.dim, &vars.dirs, &["u","tmp","sum","sumdst","moments"], None)?;
+                h.run_algorithm("moments", vars.dim, &vars.dim.all_dirs(), &[&vars.dvars[0],"tmp","sum","sumdst","moments"], None)?;
                 let moments = h.get("moments")?.VF64();
                 let cumulants = moments_to_cumulants(&moments);
                 write_all("moments.yaml", &format!("- t: {:e}\n  moments: [{}]\n  cumulants: [{}]\n", t,
@@ -38,7 +38,7 @@ impl Action {
                 Ok(())
             }),
             Correlation => Box::new(|h,vars,t| {
-                h.run_algorithm("correlation", vars.dim, &vars.dirs, &["u","tmp"], None)?;
+                h.run_algorithm("correlation", vars.dim, &vars.dirs, &[&vars.dvars[0],"tmp"], None)?;
                 let correlation = h.get("tmp")?.VF64();
                 write_all("correlation.yaml", &format!("- t: {:e}\n  correlation: [{}]\n", t,
                         correlation.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
@@ -47,7 +47,7 @@ impl Action {
                 Ok(())
             }),
             StaticStructureFactor => Box::new(|h,vars,t| {
-                h.run_arg("complex_from_real", D1(vars.len), &[BufArg("u","src"),BufArg("srcFFT","dst")])?;
+                h.run_arg("complex_from_real", D1(vars.len), &[BufArg(&vars.dvars[0],"src"),BufArg("srcFFT","dst")])?;
                 h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], None)?;
                 h.run_arg("kc_sqrmod", D1(vars.len), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
                 let fft = h.get("tmp")?.VF64();
@@ -58,7 +58,7 @@ impl Action {
                 Ok(())
             }),
             DynamicStructureFactor => { let mut first = true; let mut start = "\n-"; Box::new(move |h,vars,t| {
-                h.run_arg("complex_from_real", D1(vars.len), &[BufArg("u","src"),BufArg("srcFFT","dst")])?;
+                h.run_arg("complex_from_real", D1(vars.len), &[BufArg(&vars.dvars[0],"src"),BufArg("srcFFT","dst")])?;
                 h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], None)?;
                 if first {
                     first = false;

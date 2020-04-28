@@ -1,7 +1,6 @@
 use serde::{Deserialize,Serialize};
 use crate::simulation::parameters::actions::Action;
 use crate::simulation::parameters::activations::Repetition;
-use gpgpu::Dim;
 use gpgpu::DimDir;
 
 pub mod actions;
@@ -10,8 +9,11 @@ pub mod activations;
 pub use activations::ActivationCallback;
 pub mod symbols;
 pub use symbols::SymbolsTypes;
-pub mod integrators;
-pub use integrators::Integrator;
+
+#[derive(Deserialize,Serialize,Debug)]
+pub enum Integrator {
+    Euler{dt: f64},
+}
 
 #[derive(Deserialize,Serialize,Debug)]
 pub struct Param {
@@ -19,13 +21,31 @@ pub struct Param {
     pub actions: Vec<(Action,Repetition)>,
     pub symbols: Vec<SymbolsTypes>,
     pub config: Config,
-    pub integrators: Vec<Integrator>,
+    pub integrator: Integrator,
+    pub initial_conditions_file: Option<String>,
+}
+
+#[derive(Deserialize,Serialize,Debug)]
+pub enum DimPhy {
+    D1((usize,f64)),
+    D2((usize,f64),(usize,f64)),
+    D3((usize,f64),(usize,f64),(usize,f64)),
+}
+
+impl From<DimPhy> for ([usize;3],[f64;3]) {
+    fn from(d: DimPhy) -> Self {
+        match d {
+            DimPhy::D1((u,f)) => ([u,1,1],[f,0.0,0.0]),
+            DimPhy::D2((u0,f0),(u1,f1)) => ([u0,u1,1],[f0,f1,0.0]),
+            DimPhy::D3((u0,f0),(u1,f1),(u2,f2)) => ([u0,u1,u2],[f0,f1,f2]),
+        }
+    }
 }
 
 #[derive(Deserialize,Serialize,Debug)]
 pub struct Config {
     pub t_max: f64,
-    pub dim: Dim,
+    pub dim: DimPhy,
     pub dirs: Vec<DimDir>,
 }
 
