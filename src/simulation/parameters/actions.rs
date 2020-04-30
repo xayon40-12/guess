@@ -31,8 +31,8 @@ impl Action {
                 let moments = h.get("moments")?.VF64();
                 let cumulants = moments_to_cumulants(&moments);
                 write_all("moments.yaml", &format!("- t: {:e}\n  moments: [{}]\n  cumulants: [{}]\n", t,
-                        moments.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","),
-                        cumulants.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+                        moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
+                        cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
 
                 Ok(())
@@ -41,7 +41,7 @@ impl Action {
                 h.run_algorithm("correlation", vars.dim, &vars.dirs, &[&vars.dvars[0],"tmp"], None)?;
                 let correlation = h.get("tmp")?.VF64();
                 write_all("correlation.yaml", &format!("- t: {:e}\n  correlation: [{}]\n", t,
-                        correlation.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+                        correlation.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
 
                 Ok(())
@@ -52,7 +52,7 @@ impl Action {
                 h.run_arg("kc_sqrmod", D1(vars.len), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
                 let fft = h.get("tmp")?.VF64();
                 write_all("static_structure_factor.yaml", &format!("- t: {:e}\n  Sk: [{}]\n", t,
-                        fft.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+                        fft.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
 
                 Ok(())
@@ -68,7 +68,7 @@ impl Action {
                 h.run_arg("kc_sqrmod", D1(vars.len), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
                 let fft = h.get("tmp")?.VF64();
                 write_all("dynamic_structure_factor.yaml", &format!("{} - t: {:e}\n    Sk: [{}]\n", &start, t,
-                        fft.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+                        fft.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
                 start = " ";
 

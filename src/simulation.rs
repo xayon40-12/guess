@@ -3,6 +3,7 @@ use gpgpu::data_file::Format;
 use gpgpu::{Dim::{self,*},DimDir};
 use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,KernelArg::*,SFunctionConstructor::*};
 
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
@@ -40,7 +41,7 @@ impl Simulation {
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
         let Vars {t_max, dim, dirs: _, len, ref dvars} = self.vars;
-        let noise_dim = D1(len*dim.len());
+        let noise_dim = D1(len*dim.len()/2);//WARNING must divide by 2 because random number are computed 2 at a time
         let dvars = dvars.iter().map(|i| &i[..]).collect::<Vec<_>>();
 
         let mut t = 0.0;
@@ -49,7 +50,14 @@ impl Simulation {
                 callback(&mut self.handler, &self.vars, t)?;
             }
         }
+        let mut pred = t;
+        let int = t_max/100.0;
         while t<t_max {
+            #[cfg(debug_assertions)]
+            if t>=pred+int {
+                pred = t;
+                print!(" {}%\r",f64::trunc(t/int)); std::io::stdout().lock().flush().unwrap(); 
+            }
             self.handler.run("noise", noise_dim)?;
 
             t = *self.handler.run_algorithm("integrator",dim,&[],&dvars[..],Some(&(t,vec![("t".to_string(),F64(t))])))?.unwrap().downcast_ref::<f64>().unwrap();
@@ -87,11 +95,12 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
     h = h.add_buffer("sum", Len(F64(0.0), len));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum));
     h = h.add_buffer("moments", Len(F64(0.0), 4));
-    h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0].into()), len));
-    h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0].into()), len));
-    h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0].into()), len));
-    h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0].into()), len));
-    h = h.load_all_algorithms();
+    h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0]), len));
+    h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0]), len));
+    h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0]), len));
+    h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0]), len));
+    h = h.load_algorithm("moments");
+    h = h.load_algorithm("correlation");
     h = h.load_kernel_named("philox4x32_10_normal","noise");
     h = h.load_kernel("complex_from_real");
     h = h.load_kernel("kc_sqrmod");
@@ -101,7 +110,7 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
         use SymbolsTypes::*;
         use gpgpu::integrators::{create_euler_pde};
         use gpgpu::functions::SFunction;
-        use std::collections::HashSet;
+        use std::collections::{HashSet,HashMap};
         use regex::Regex;
         let mut consts_names = HashSet::new();
         let mut consts: Vec<Box<dyn Fn(String) -> String>> = vec![];
@@ -119,6 +128,18 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
                 let val = format!("{:e}",1.0/d);
                 consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
             }
+        }
+        match &param.integrator {
+            Integrator::Euler{dt} => {
+                let symb = "dt";
+                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
+                let val = format!("{:e}",dt);
+                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
+                let symb = "ivdt";
+                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
+                let val = format!("{:e}",1.0/dt);
+                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
+            },
         }
         for symb in &param.symbols {
             match symb {
@@ -163,25 +184,32 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
                 },
                 PDEs(mut pdes) => {
                     pdes_dvars = Some(pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>());
-                    pdes.iter_mut().for_each(|mut i| i.expr = replace(i.expr.clone()));
+                    pdes.iter_mut().for_each(|i| i.expr.iter_mut().for_each(|e| *e=replace(e.clone())));
                     match &param.integrator {
                         Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(vec!["xi".into()]),vec![("t".into(),CF64)])),
+            //TODO add all noises
                     }
                 },
             }
         }
-        if let Some(mut dvars) = pdes_dvars {
+        let dvars = if let Some(mut dvars) = pdes_dvars {
             dvars.iter_mut().for_each(|i| *i = format!("dvar_{}",i));
             dvars.insert(0,"dst".to_string());
             for dvar in &dvars {
                 h = h.add_buffer(dvar,Len(F64(0.0),len));
             }
+            //TODO push all noises
             dvars.push("xi".into());
             dvars
         } else {
             panic!("PDEs must be given.")
+        };
+        if let Some(file) = param.initial_conditions_file {
+            let init: HashMap<String,Vec<f64>> = serde_yaml::from_str(&std::fs::read_to_string(&file).expect(&format!("Could not find initial conditions file \"{}\".", &file))).unwrap();
+
+
         }
-        //TODO read initial conditions
+        dvars
     };
 
     let mut handler = h.build()?;

@@ -1,12 +1,12 @@
 data_files: [param/param_temp.txt]
 actions:
-  - [Moments, {Every: 1}]
-  - [Correlation, {Every: 1}]
+  - [Moments, {Every: 30}]
+    #  - [Correlation, {Every: 3}]
     #  - [StaticStructureFactor, {Interval: {from: 1, to: 4, every: 0.3}}]
     #  - [DynamicStructureFactor, {TotalInterval: {from: 1, to: 4, total: 0.7}}]
 config:
-  t_max: 10
-  dim: {D2: [[256,20],[3,0]]}
+  t_max: 100
+  dim: {D2: [[256,20],[100,0]]} #{D3: [[256,20],[16,0],[16,0]]}
   dirs: [X]
 symbols:
   - Constant:
@@ -18,7 +18,7 @@ symbols:
       src: D * a
   - PDEs:
       - dvar: u
-        expr: "f(1)*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*1000)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx"
+        expr: ["f(1)*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x+x_size-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx"]
 integrator:
   Euler:
     dt: 0.001
