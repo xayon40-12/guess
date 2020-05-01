@@ -116,10 +116,13 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
 
+    let mut init_kernels = vec![];
     let dvars = {
         use SymbolsTypes::*;
         use gpgpu::integrators::{create_euler_pde};
         use gpgpu::functions::SFunction;
+        use gpgpu::kernels::Kernel;
+        use gpgpu::descriptors::KernelConstructor::KCBuffer;
         use std::collections::{HashSet,HashMap};
         use regex::Regex;
         let mut consts_names = HashSet::new();
@@ -184,16 +187,16 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
                 }
             }
         }
+        let mut to_init = None;
         for symb in param.symbols {
             match symb {
                 Constant{..} => {},
-                Function{name,args,indx_args,src} => {
-                    let mut args = args.into_iter().map(|a| FCParam(a,CF64)).collect::<Vec<_>>();
-                    if let Some(ia) = indx_args { 
-                        for a in ia {
-                            args.push(FCGlobalPtr(a,CF64));
-                        }
-                    }
+                Function{name,args,src} => {
+                    let args = args.into_iter().map(|a| if a.1 {
+                        FCGlobalPtr(a.0,CF64)
+                    } else {
+                        FCParam(a.0,CF64)
+                    }).collect::<Vec<_>>();
 
                     h = h.create_function(SFunction {
                         name,
@@ -205,12 +208,14 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
 
                 },
                 PDEs(mut pdes) => {
-                    pdes_dvars = Some(pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>());
+                    pdes_dvars = Some(pdes.iter().map(|i| (i.dvar.clone(),i.expr.len())).collect::<Vec<_>>());
                     pdes.iter_mut().for_each(|i| i.expr.iter_mut().for_each(|e| *e=replace(e.clone())));
                     match &param.integrator {
                         Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
-            //TODO add all noises
                     }
+                },
+                Init(init) => {
+                    to_init = Some(init);
                 },
             }
         }
@@ -219,15 +224,50 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
         } else {
             HashMap::new()
         };
-        let dvars = if let Some(mut dvars) = pdes_dvars {
-            dvars.iter_mut().for_each(|i| *i = format!("dvar_{}",i));
-            dvars.insert(0,"dvar_dst".to_string());
+        if let Some(mut dvars) = pdes_dvars {
+            if let Some(init) = to_init {
+                let mut args = vec![KCBuffer("dst",CF64)];
+                args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0,CF64)));
+                args.extend(noises_names.iter().map(|n| KCBuffer(&n,CF64)));
+                //let len = dvars.len()+noises_names.len()+1;
+                for ini in init {
+                    let mut id = "x+x_size*(y+y_size*z)".to_string();
+                    let len = dvars.iter().find(|(n,_)| n == &ini.name).expect(&format!("There must be a PDE corresponding to init data \"{}\"",&ini.name)).1;
+                    if len > 1 {
+                        id = format!("{}*({})", len, id);
+                    }
+                    let expr = if len == 1 {
+                        format!("    dst[_i] = {};\n", &ini.expr[0])
+                    } else {
+                        let mut expr = String::new();
+                        for i in 0..len {
+                            expr += &format!("    dst[{i}+_i] = {};\n", &ini.expr[i], i = i);
+                        }
+                        expr
+                    };
+                    let name = format!("init_{}", &ini.name);
+                    h = h.create_kernel(&Kernel {
+                        name: &name,
+                        args: args.clone(),
+                        src: &format!("    uint _i = {};\n{}", id, expr),
+                        needed: vec![],
+                    });
+                    init_kernels.push(name);
+                }
+            }
+
+            let mut max = 0;
+            dvars.iter_mut().for_each(|i| {
+                max = usize::max(max,i.1);
+                i.0 = format!("dvar_{}",i.0); 
+            });
+            dvars.insert(0,("dvar_dst".to_string(),max));
             for dvar in &dvars {
-                h = h.add_buffer(dvar,if let Some(data) = init.remove(&dvar[5..]) {
-                    if data.len() != len { panic!("Data stored in initial conditions file must as much elements as the simulation total dim. Given \"{}\" of size {} whereas total dim is {}.", dvar, data.len(), len) }
+                h = h.add_buffer(&dvar.0,if let Some(data) = init.remove(&dvar.0[5..]) {
+                    if data.len() != len*dvar.1 { panic!("Data stored in initial conditions file must have as much elements as the simulation total dim. Given \"{}\" of size {} whereas total dim is {}.", dvar.0, data.len(), len*dvar.1) }
                     Data(data.into())
                 } else {
-                    Len(F64(0.0),len)
+                    Len(F64(0.0),len*dvar.1)
                 });
             }
             if init.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init.keys()) }
@@ -235,20 +275,20 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
                 for noise in noises {
                     match noise {
                         Uniform{name,dim} | Normal{name,dim} => {
-                            let l = len*if let Some(d) = dim { if *d==0 { panic!("dim of noise \"{}\" must be different of 0.",name) } else { *d } } else { 1 };
+                            let dim = if let Some(d) = dim { if *d==0 { panic!("dim of noise \"{}\" must be different of 0.",name) } else { *d } } else { 1 };
+                            let l = len*dim;
                             h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
                             time += 1;
                             h = h.add_buffer(name,Len(F64(0.0),l));
-                            dvars.push(name.clone());
+                            dvars.push((name.clone(),dim));
                         },
                     }
                 }
             }
-            dvars
+            dvars.into_iter().map(|i| i.0).collect::<Vec<_>>()
         } else {
             panic!("PDEs must be given.")
-        };
-        dvars
+        }
     };
 
     if let Some(noises) = &mut param.noises {
@@ -260,7 +300,23 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
         }
     }
 
-    let handler = h.build()?;
+    let mut handler = h.build()?;
+    if init_kernels.len()>0 {
+        let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
+        if let Some(noises) = &param.noises {
+            for noise in noises {
+                match noise {
+                    Uniform{name,dim} => handler.run_arg("unifnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+                    Normal{name,dim} => handler.run_arg("normnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+                }
+            }
+        }
+        let args = dvars.iter().map(|n| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
+        for name in init_kernels {
+            handler.run_arg(&name, dim, &args)?;
+            handler.copy("dvar_dst", &name.replace("init_","dvar_"))?;
+        }
+    }
 
     let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises };
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();

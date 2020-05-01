@@ -9,9 +9,20 @@ noises:
   - Normal:
       name: xi
 symbols:
+  - Function:
+      name: f
+      args: [[a,false],[b,true]]
+      src: 1 #b[(uint)a]
   - PDEs:
-      - dvar: u
-        expr: ["1"]
+    - dvar: u
+      expr: ["f(x,u)"]
+    - dvar: v
+      expr: ["1","1"]
+  - Init:
+    - name: u
+      expr: ["u[_i]+1"]
+    - name: v
+      expr: ["v[_i]+1","v[_i+1]+1"]
 integrator:
   Euler:
     dt: 0.001
