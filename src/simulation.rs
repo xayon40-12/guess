@@ -3,11 +3,13 @@ use gpgpu::data_file::Format;
 use gpgpu::{Dim::{self,*},DimDir};
 use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,KernelArg::*,SFunctionConstructor::*};
 
+#[cfg(debug_assertions)]
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
 pub use parameters::{Callback,ActivationCallback,Param,Integrator,SymbolsTypes};
+use parameters::Noises::{self,*};
 
 pub struct Vars {
     pub t_max: f64,
@@ -15,6 +17,7 @@ pub struct Vars {
     pub dirs: Vec<DimDir>,
     pub len: usize,
     pub dvars: Vec<String>,
+    pub noises: Vec<Noises>,
 }
 
 pub struct Simulation {
@@ -40,8 +43,8 @@ impl Simulation {
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
-        let Vars {t_max, dim, dirs: _, len, ref dvars} = self.vars;
-        let noise_dim = D1(len*dim.len()/2);//WARNING must divide by 2 because random number are computed 2 at a time
+        let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises } = self.vars;
+        let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
         let dvars = dvars.iter().map(|i| &i[..]).collect::<Vec<_>>();
 
         let mut t = 0.0;
@@ -50,15 +53,20 @@ impl Simulation {
                 callback(&mut self.handler, &self.vars, t)?;
             }
         }
-        let mut pred = t;
-        let int = t_max/100.0;
+        #[cfg(debug_assertions)]
+        let (mut pred,int) = (t,t_max/100.0);
         while t<t_max {
             #[cfg(debug_assertions)]
             if t>=pred+int {
                 pred = t;
                 print!(" {}%\r",f64::trunc(t/int)); std::io::stdout().lock().flush().unwrap(); 
             }
-            self.handler.run("noise", noise_dim)?;
+            for noise in noises {
+                match noise {
+                    Uniform{name,dim} => self.handler.run_arg("unifnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+                    Normal{name,dim} => self.handler.run_arg("normnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+                }
+            }
 
             t = *self.handler.run_algorithm("integrator",dim,&[],&dvars[..],Some(&(t,vec![("t".to_string(),F64(t))])))?.unwrap().downcast_ref::<f64>().unwrap();
 
@@ -73,7 +81,7 @@ impl Simulation {
     }
 }
 
-fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulation> {
+fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Simulation> {
 
     let (dims,phy) = param.config.dim.into();
     let dim: Dim = dims.into();
@@ -85,12 +93,10 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
     let len = dims[0]*dims[1]*dims[2];
     let lensum = sumdims[0]*sumdims[1]*sumdims[2];
 
-    let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    //TODO verify that there is no link between two noise that start whith an initial condition
+    //that differ of 1.
+    let mut time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
-    let noise_len = len*dim.len();//TODO change so that it correspond to the pdes
-
-    h = h.add_buffer("srcxi", Len(U64(time),noise_len));
-    h = h.add_buffer("xi", Len(F64(0.0),noise_len));
     h = h.add_buffer("tmp", Len(F64(0.0), len));
     h = h.add_buffer("sum", Len(F64(0.0), len));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum));
@@ -101,7 +107,8 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
     h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0]), len));
     h = h.load_algorithm("moments");
     h = h.load_algorithm("correlation");
-    h = h.load_kernel_named("philox4x32_10_normal","noise");
+    h = h.load_kernel_named("philox4x32_10_unit","unifnoise");
+    h = h.load_kernel_named("philox4x32_10_normal","normnoise");
     h = h.load_kernel("complex_from_real");
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
@@ -162,6 +169,16 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
             s
         };
         let mut pdes_dvars = None;
+        let mut noises_names = vec![];
+        let mut noises_names_set = HashSet::new();
+        for noise in &param.noises {
+            match noise {
+                Uniform{name,..} | Normal{name,..} => {
+                    noises_names.push(name.to_string());
+                    if !noises_names_set.insert(name) { panic!("Each noises must have a different name.") }
+                },
+            }
+        }
         for symb in param.symbols {
             match symb {
                 Constant{..} => {},
@@ -186,7 +203,7 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
                     pdes_dvars = Some(pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>());
                     pdes.iter_mut().for_each(|i| i.expr.iter_mut().for_each(|e| *e=replace(e.clone())));
                     match &param.integrator {
-                        Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(vec!["xi".into()]),vec![("t".into(),CF64)])),
+                        Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
             //TODO add all noises
                     }
                 },
@@ -198,8 +215,17 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
             for dvar in &dvars {
                 h = h.add_buffer(dvar,Len(F64(0.0),len));
             }
-            //TODO push all noises
-            dvars.push("xi".into());
+            for noise in &param.noises {
+                match noise {
+                    Uniform{name,dim} | Normal{name,dim} => {
+                        let l = len*if let Some(d) = dim { if *d==0 { panic!("dim of noise \"{}\" must be different of 0.",name) } else { *d } } else { 1 };
+                        h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
+                        time += 1;
+                        h = h.add_buffer(name,Len(F64(0.0),l));
+                        dvars.push(name.clone());
+                    },
+                }
+            }
             dvars
         } else {
             panic!("PDEs must be given.")
@@ -212,10 +238,16 @@ fn extract_symbols(mut h: HandlerBuilder, param: Param) -> gpgpu::Result<Simulat
         dvars
     };
 
-    let mut handler = h.build()?;
-    handler.set_arg("noise", &[BufArg("srcxi","src"),BufArg("xi","dst")])?;
+    for noise in &mut param.noises {
+        match noise {
+            Uniform{name,..} => *name = format!("src{}",name),
+            Normal{name,..} => *name = format!("src{}",name),
+        }
+    }
 
-    let vars = Vars { t_max, dim, dirs, len, dvars };
+    let handler = h.build()?;
+
+    let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises };
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
 
     Ok(Simulation { handler, callbacks, vars })

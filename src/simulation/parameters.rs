@@ -16,9 +16,16 @@ pub enum Integrator {
 }
 
 #[derive(Deserialize,Serialize,Debug)]
+pub enum Noises {
+    Uniform{name: String, dim: Option<usize>},
+    Normal{name: String, dim: Option<usize>},
+}
+
+#[derive(Deserialize,Serialize,Debug)]
 pub struct Param {
     pub data_files: Vec<String>,
     pub actions: Vec<(Action,Repetition)>,
+    pub noises: Vec<Noises>,
     pub symbols: Vec<SymbolsTypes>,
     pub config: Config,
     pub integrator: Integrator,
