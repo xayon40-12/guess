@@ -1,0 +1,17 @@
+initial_conditions_file: param/init_cond.txt
+actions:
+  - [Moments, {Every: 1}]
+config:
+  t_max: 3.1
+  dim: {D1: [8,1]}
+  dirs: [X]
+noises:
+  - Normal:
+      name: xi
+symbols:
+  - PDEs:
+      - dvar: u
+        expr: ["1"]
+integrator:
+  Euler:
+    dt: 0.001

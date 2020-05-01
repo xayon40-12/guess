@@ -17,7 +17,7 @@ pub struct Vars {
     pub dirs: Vec<DimDir>,
     pub len: usize,
     pub dvars: Vec<String>,
-    pub noises: Vec<Noises>,
+    pub noises: Option<Vec<Noises>>,
 }
 
 pub struct Simulation {
@@ -29,14 +29,15 @@ pub struct Simulation {
 impl Simulation {
     pub fn from_param<'a>(file_name: &'a str) -> gpgpu::Result<Self> {
         let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).unwrap();
-        println!("param:\n{:?}", &param);
 
         let mut handler = Handler::builder()?;
 
-        for f in &param.data_files {
-            let name = if let Some(i) = f.find('.') { &f[..i] } else { f };
-            let name = if let Some(i) = name.rfind('/') { &name[i+1..] } else { name };
-            handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(f).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
+        if let Some(data_files) = &param.data_files {
+            for f in data_files {
+                let name = if let Some(i) = f.find('.') { &f[..i] } else { f };
+                let name = if let Some(i) = name.rfind('/') { &name[i+1..] } else { name };
+                handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(f).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
+            }
         }
 
         extract_symbols(handler, param)
@@ -61,10 +62,12 @@ impl Simulation {
                 pred = t;
                 print!(" {}%\r",f64::trunc(t/int)); std::io::stdout().lock().flush().unwrap(); 
             }
-            for noise in noises {
-                match noise {
-                    Uniform{name,dim} => self.handler.run_arg("unifnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
-                    Normal{name,dim} => self.handler.run_arg("normnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+            if let Some(noises) = noises {
+                for noise in noises {
+                    match noise {
+                        Uniform{name,dim} => self.handler.run_arg("unifnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+                        Normal{name,dim} => self.handler.run_arg("normnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
+                    }
                 }
             }
 
@@ -171,12 +174,14 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
         let mut pdes_dvars = None;
         let mut noises_names = vec![];
         let mut noises_names_set = HashSet::new();
-        for noise in &param.noises {
-            match noise {
-                Uniform{name,..} | Normal{name,..} => {
-                    noises_names.push(name.to_string());
-                    if !noises_names_set.insert(name) { panic!("Each noises must have a different name.") }
-                },
+        if let Some(noises) = &param.noises {
+            for noise in noises {
+                match noise {
+                    Uniform{name,..} | Normal{name,..} => {
+                        noises_names.push(name.to_string());
+                        if !noises_names_set.insert(name) { panic!("Each noises must have a different name.") }
+                    },
+                }
             }
         }
         for symb in param.symbols {
@@ -209,39 +214,49 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
                 },
             }
         }
+        let mut init: HashMap<String,Vec<f64>> = if let Some(file) = param.initial_conditions_file {
+            serde_yaml::from_str(&std::fs::read_to_string(&file).expect(&format!("Could not find initial conditions file \"{}\".", &file))).unwrap()
+        } else {
+            HashMap::new()
+        };
         let dvars = if let Some(mut dvars) = pdes_dvars {
             dvars.iter_mut().for_each(|i| *i = format!("dvar_{}",i));
-            dvars.insert(0,"dst".to_string());
+            dvars.insert(0,"dvar_dst".to_string());
             for dvar in &dvars {
-                h = h.add_buffer(dvar,Len(F64(0.0),len));
+                h = h.add_buffer(dvar,if let Some(data) = init.remove(&dvar[5..]) {
+                    if data.len() != len { panic!("Data stored in initial conditions file must as much elements as the simulation total dim. Given \"{}\" of size {} whereas total dim is {}.", dvar, data.len(), len) }
+                    Data(data.into())
+                } else {
+                    Len(F64(0.0),len)
+                });
             }
-            for noise in &param.noises {
-                match noise {
-                    Uniform{name,dim} | Normal{name,dim} => {
-                        let l = len*if let Some(d) = dim { if *d==0 { panic!("dim of noise \"{}\" must be different of 0.",name) } else { *d } } else { 1 };
-                        h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
-                        time += 1;
-                        h = h.add_buffer(name,Len(F64(0.0),l));
-                        dvars.push(name.clone());
-                    },
+            if init.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init.keys()) }
+            if let Some(noises) = &param.noises {
+                for noise in noises {
+                    match noise {
+                        Uniform{name,dim} | Normal{name,dim} => {
+                            let l = len*if let Some(d) = dim { if *d==0 { panic!("dim of noise \"{}\" must be different of 0.",name) } else { *d } } else { 1 };
+                            h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
+                            time += 1;
+                            h = h.add_buffer(name,Len(F64(0.0),l));
+                            dvars.push(name.clone());
+                        },
+                    }
                 }
             }
             dvars
         } else {
             panic!("PDEs must be given.")
         };
-        if let Some(file) = param.initial_conditions_file {
-            let init: HashMap<String,Vec<f64>> = serde_yaml::from_str(&std::fs::read_to_string(&file).expect(&format!("Could not find initial conditions file \"{}\".", &file))).unwrap();
-
-
-        }
         dvars
     };
 
-    for noise in &mut param.noises {
-        match noise {
-            Uniform{name,..} => *name = format!("src{}",name),
-            Normal{name,..} => *name = format!("src{}",name),
+    if let Some(noises) = &mut param.noises {
+        for noise in noises {
+            match noise {
+                Uniform{name,..} => *name = format!("src{}",name),
+                Normal{name,..} => *name = format!("src{}",name),
+            }
         }
     }
 

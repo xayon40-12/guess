@@ -23,9 +23,9 @@ pub enum Noises {
 
 #[derive(Deserialize,Serialize,Debug)]
 pub struct Param {
-    pub data_files: Vec<String>,
+    pub data_files: Option<Vec<String>>,
     pub actions: Vec<(Action,Repetition)>,
-    pub noises: Vec<Noises>,
+    pub noises: Option<Vec<Noises>>,
     pub symbols: Vec<SymbolsTypes>,
     pub config: Config,
     pub integrator: Integrator,
