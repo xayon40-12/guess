@@ -17,7 +17,7 @@ symbols:
       value: 1
   - Function:
       name: f
-      args: [a]
+      args: [[a,Float]]
       src: D * a
   - PDEs:
       - dvar: u

@@ -1,4 +1,4 @@
-initial_conditions_file: param/init_cond.txt
+initial_conditions_file: param/init_cond_data.yaml
 actions:
   - [Moments, {Every: 1}]
 config:
@@ -11,8 +11,8 @@ noises:
 symbols:
   - Function:
       name: f
-      args: [[a,false],[b,true]]
-      src: 1 #b[(uint)a]
+      args: [[a,Integer],[b,Indexable]]
+      src: b[a]
   - PDEs:
     - dvar: u
       expr: ["f(x,u)"]

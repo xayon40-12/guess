@@ -119,6 +119,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     let mut init_kernels = vec![];
     let dvars = {
         use SymbolsTypes::*;
+        use parameters::symbols::PrmType::*;
         use gpgpu::integrators::{create_euler_pde};
         use gpgpu::functions::SFunction;
         use gpgpu::kernels::Kernel;
@@ -192,10 +193,10 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
             match symb {
                 Constant{..} => {},
                 Function{name,args,src} => {
-                    let args = args.into_iter().map(|a| if a.1 {
-                        FCGlobalPtr(a.0,CF64)
-                    } else {
-                        FCParam(a.0,CF64)
+                    let args = args.into_iter().map(|a| match a.1 {
+                        Float => FCParam(a.0,CF64),
+                        Integer => FCParam(a.0,CU32),
+                        Indexable => FCGlobalPtr(a.0,CF64),
                     }).collect::<Vec<_>>();
 
                     h = h.create_function(SFunction {

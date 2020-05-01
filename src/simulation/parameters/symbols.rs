@@ -8,9 +8,16 @@ pub struct Init {
 }
 
 #[derive(Deserialize,Serialize,Debug,Clone)]
+pub enum PrmType {
+    Float,
+    Integer,
+    Indexable,
+}
+
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum SymbolsTypes {
     Constant{ name: String, value: f64 },
-    Function{ name: String, args: Vec<(String, bool)>, src: String },
+    Function{ name: String, args: Vec<(String, PrmType)>, src: String },
     PDEs(Vec<SPDE>),
     Init(Vec<Init>),//WARNING like for pdes, they will be computed in reverse order (ORDER MATERS)
 }
