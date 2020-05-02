@@ -29,6 +29,12 @@ pub struct Simulation {
 impl Simulation {
     pub fn from_param<'a>(file_name: &'a str) -> gpgpu::Result<Self> {
         let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).unwrap();
+        let directory = std::path::Path::new(file_name);
+        if let Some(directory) = directory.parent() {
+            std::env::set_current_dir(&directory).expect(&format!("Could not change directory to \"{:?}\"",&directory));
+        }
+        let target = std::path::Path::new("target");
+        std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
 
         let mut handler = Handler::builder()?;
 

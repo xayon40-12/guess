@@ -1,4 +1,4 @@
-data_files: [param/m2.txt]
+data_files: [m2.txt]
 actions:
   - [Moments, {Every: 30}]
     #  - [Correlation, {Every: 3}]
@@ -15,13 +15,9 @@ symbols:
   - Constant:
       name: D
       value: 1
-  - Function:
-      name: f
-      args: [[a,Float]]
-      src: D * a
   - PDEs:
       - dvar: u
-        expr: ["f(0.1)*m2(0.4)*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x+x_size-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx"]
+        expr: ["D*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x+x_size-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx"]
 integrator:
   Euler:
     dt: 0.001

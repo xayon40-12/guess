@@ -1,4 +1,4 @@
-initial_conditions_file: param/init_cond_data.yaml
+initial_conditions_file: init_cond_data.yaml
 actions:
   - [Moments, {Every: 1}]
 config:
