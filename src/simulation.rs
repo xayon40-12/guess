@@ -25,6 +25,7 @@ pub struct Vars {
     pub len: usize,
     pub dvars: Vec<(String,u32)>,
     pub noises: Option<Vec<Noises>>,
+    pub parent: String,
 }
 
 pub struct Simulation {
@@ -42,8 +43,6 @@ impl Simulation {
                 std::env::set_current_dir(&directory).expect(&format!("Could not change directory to \"{:?}\"",&directory));
             }
         }
-        let target = std::path::Path::new("target");
-        std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
 
         let mut handler = Handler::builder()?;
 
@@ -55,11 +54,15 @@ impl Simulation {
             }
         }
 
-        extract_symbols(handler, param)
+        let parent = if let Some(i) = file_name.find('.') { &file_name[..i] } else { file_name };
+        let parent = if let Some(i) = parent.rfind('/') { &parent[i+1..] } else { parent };
+        let target = std::path::Path::new(parent);
+        std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
+        extract_symbols(handler, param, parent.into())
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
-        let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises, phy: _ } = self.vars;
+        let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises, phy: _ , parent: _} = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
         let dvars = dvars.iter().map(|i| &i.0[..]).collect::<Vec<_>>();
 
@@ -99,7 +102,7 @@ impl Simulation {
     }
 }
 
-fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Simulation> {
+fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> gpgpu::Result<Simulation> {
 
     let (dims,phy) = param.config.dim.into();
     let dim: Dim = dims.into();
@@ -250,7 +253,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
         }
     }
 
-    let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises, phy };
+    let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises, phy, parent };
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
 
     Ok(Simulation { handler, callbacks, vars })

@@ -17,8 +17,8 @@ pub use Action::*;
 
 pub type Callback = Box<dyn FnMut(&mut gpgpu::Handler,&Vars,f64) -> gpgpu::Result<()>>;
 
-fn write_all<'a>(file_name: &'a str, content: &'a str) {
-    let write = |f,c: &str| std::fs::OpenOptions::new().create(true).append(true).open(&format!("target/{}",f))?.write_all(c.as_bytes());
+fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
+    let write = |f,c: &str| std::fs::OpenOptions::new().create(true).append(true).open(&format!("{}/{}",parent,f))?.write_all(c.as_bytes());
     if let Err(e) = write(file_name,content) {
         eprintln!("Could not write to file \"{}\".\n{:?}",file_name,e);
     }
@@ -33,7 +33,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 h.run_algorithm("moments", vars.dim, &vars.dim.all_dirs(), &[&vars.dvars[1].0,"tmp","sum","sumdst","moments"], Some(&(4u32,w)))?;
                 let moments = h.get_firsts("moments",4*w as usize)?.VF64();
                 let cumulants = moments_to_cumulants(&moments, w as _);
-                write_all("moments.yaml", &format!("- t: {:e}\n  moments: [{}]\n  cumulants: [{}]\n", t,
+                write_all(&vars.parent, "moments.yaml", &format!("- t: {:e}\n  moments: [{}]\n  cumulants: [{}]\n", t,
                         moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
                         cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
@@ -60,7 +60,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 }
                 h.run_arg("ctimes", D1(len*w as usize), &[BufArg("tmp","src"),Param("c",size.into()),BufArg("tmp","dst")])?;
                 let fft = h.get_firsts("tmp",len*w as usize)?.VF64();
-                write_all("static_structure_factor.yaml", &format!("- t: {:e}\n  Sk: [{}]\n", t,
+                write_all(&vars.parent, "static_structure_factor.yaml", &format!("- t: {:e}\n  Sk: [{}]\n", t,
                         fft.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
 
@@ -90,7 +90,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 }
                 h.run_arg("ctimes", D1(len*w as usize*2), &[BufArg("dstFFT","src"),Param("c",size.into()),BufArg("dstFFT","dst")])?;
                 let fft = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
-                write_all("dynamic_structure_factor.yaml", &format!("{} - t: {:e}\n    Sk: [{}]\n", &start, t,
+                write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{} - t: {:e}\n    Sk: [{}]\n", &start, t,
                         fft.iter().flatten().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
                 start = " ";
@@ -112,7 +112,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     h.run_arg("ctimes", D1(len*w as usize), &[BufArg("tmp","src"),Param("c",size.into()),BufArg("tmp","dst")])?;
                 }
                 let correlation = h.get_firsts("tmp",len*w as usize)?.VF64();
-                write_all("correlation.yaml", &format!("- t: {:e}\n  raw: [{}]\n", t,
+                write_all(&vars.parent, "correlation.yaml", &format!("- t: {:e}\n  raw: [{}]\n", t,
                         correlation.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
 
@@ -122,7 +122,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 let w = vars.dvars[1].1;
                 let len = vars.len;
                 let raw = h.get_firsts(&vars.dvars[1].0,len*w as usize)?.VF64();
-                write_all("raw.yaml", &format!("- t: {:e}\n  raw: [{}]\n", t,
+                write_all(&vars.parent, "raw.yaml", &format!("- t: {:e}\n  raw: [{}]\n", t,
                         raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
                 ));
 
