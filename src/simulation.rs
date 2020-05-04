@@ -14,6 +14,7 @@ use parameters::Noises::{self,*};
 pub struct Vars {
     pub t_max: f64,
     pub dim: Dim,
+    pub phy: [f64;3],
     pub dirs: Vec<DimDir>,
     pub len: usize,
     pub dvars: Vec<String>,
@@ -31,7 +32,9 @@ impl Simulation {
         let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).unwrap();
         let directory = std::path::Path::new(file_name);
         if let Some(directory) = directory.parent() {
-            std::env::set_current_dir(&directory).expect(&format!("Could not change directory to \"{:?}\"",&directory));
+            if directory.exists() {
+                std::env::set_current_dir(&directory).expect(&format!("Could not change directory to \"{:?}\"",&directory));
+            }
         }
         let target = std::path::Path::new("target");
         std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
@@ -50,7 +53,7 @@ impl Simulation {
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
-        let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises } = self.vars;
+        let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises, phy: _ } = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
         let dvars = dvars.iter().map(|i| &i[..]).collect::<Vec<_>>();
 
@@ -115,12 +118,16 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0]), len));
     h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0]), len));
     h = h.load_algorithm("moments");
+    h = h.load_algorithm("sum");
     h = h.load_algorithm("correlation");
+    h = h.load_algorithm("FFT");
     h = h.load_kernel_named("philox4x32_10_unit","unifnoise");
     h = h.load_kernel_named("philox4x32_10_normal","normnoise");
     h = h.load_kernel("complex_from_real");
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
+    h = h.load_kernel("kc_times_conj");
+    h = h.load_kernel("ctimes");
 
     let mut init_kernels = vec![];
     let dvars = {
@@ -325,7 +332,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
         }
     }
 
-    let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises };
+    let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises, phy };
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
 
     Ok(Simulation { handler, callbacks, vars })

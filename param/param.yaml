@@ -1,12 +1,11 @@
 data_files: [m2.txt]
 actions:
   - [Moments, {Every: 30}]
-    #  - [Correlation, {Every: 3}]
-    #  - [StaticStructureFactor, {Interval: {from: 1, to: 4, every: 0.3}}]
-    #  - [DynamicStructureFactor, {TotalInterval: {from: 1, to: 4, total: 0.7}}]
+  - [StaticStructureFactor, {Interval: {from: 90, to: 100, every: 3}}]
+  - [DynamicStructureFactor, {TotalInterval: {from: 90, to: 100, total: 3}}]
 config:
   t_max: 100
-  dim: {D2: [[256,20],[100,0]]} #{D3: [[256,20],[16,0],[16,0]]}
+  dim: {D2: [[8,20],[1000,0]]} #{D3: [[256,20],[16,0],[16,0]]}
   dirs: [X]
 noises:
   - Normal:
