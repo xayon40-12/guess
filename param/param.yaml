@@ -1,22 +1,18 @@
 data_files: [m2.txt]
 actions:
-  - [Moments, {Every: 30}]
-  - [StaticStructureFactor, {Interval: {from: 90, to: 100, every: 3}}]
-  - [DynamicStructureFactor, {TotalInterval: {from: 90, to: 100, total: 3}}]
+  - [Moments, {TotalInterval: {from: 7, to: 10, total: 3}}]
+  - [StaticStructureFactor, {TotalInterval: {from: 7, to: 10, total: 3}}]
+  - [DynamicStructureFactor, {TotalInterval: {from: 7, to: 10, total: 3}}]
 config:
-  t_max: 100
-  dim: {D2: [[8,20],[1000,0]]} #{D3: [[256,20],[16,0],[16,0]]}
+  t_max: 10
+  dim: {D2: [[256,20],[1000,0]]} #{D3: [[256,20],[16,0],[16,0]]}
   dirs: [X]
 noises:
   - Normal:
       name: xi
-symbols:
-  - Constant:
-      name: D
-      value: 1
-  - PDEs:
-      - dvar: u
-        expr: ["D*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x+x_size-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx"]
+symbols: |
+  D := 1
+  u' := D*m2(0.15)*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x+x_size-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx
 integrator:
   Euler:
     dt: 0.001

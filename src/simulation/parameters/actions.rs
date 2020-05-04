@@ -10,6 +10,7 @@ pub enum Action {
     Moments,
     StaticStructureFactor,
     DynamicStructureFactor,
+    Correlation,
     RawData,
 }
 pub use Action::*;
@@ -96,6 +97,27 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
 
                 Ok(())
             })},
+            Correlation => Box::new(|h,vars,t| {
+                let w = vars.dvars[1].1;
+                let mut len = vars.len;
+                h.run_algorithm("correlation",vars.dim,&vars.dirs,&[&vars.dvars[1].0,"tmp"],Some(&w))?;
+                if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                    let mut dim: [usize;3] = vars.dim.into();
+                    let mut dirs = vars.dim.all_dirs();
+                    dirs.retain(|v| !vars.dirs.contains(&v));
+                    h.run_algorithm("sum",dim.into(),&dirs,&["tmp","sum","tmp"],Some(&w))?;
+                    dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                    len = dim[0]*dim[1]*dim[2];
+                    let size = len as f64/vars.len as f64;
+                    h.run_arg("ctimes", D1(len*w as usize), &[BufArg("tmp","src"),Param("c",size.into()),BufArg("tmp","dst")])?;
+                }
+                let correlation = h.get_firsts("tmp",len*w as usize)?.VF64();
+                write_all("correlation.yaml", &format!("- t: {:e}\n  raw: [{}]\n", t,
+                        correlation.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                ));
+
+                Ok(())
+            }),
             RawData => Box::new(|h,vars,t| {
                 let w = vars.dvars[1].1;
                 let len = vars.len;

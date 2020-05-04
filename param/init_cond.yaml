@@ -5,24 +5,12 @@ config:
   t_max: 3.1
   dim: {D1: [8,1]}
   dirs: [X]
-noises:
-  - Normal:
-      name: xi
-symbols:
-  - Function:
-      name: f
-      args: [[a,Integer],[b,Indexable]]
-      src: b[a]
-  - PDEs:
-    - dvar: u
-      expr: ["f(x,u)"]
-    - dvar: v
-      expr: ["1","1"]
-  - Init:
-    - name: u
-      expr: ["u[_i]+1"]
-    - name: v
-      expr: ["v[_i]+1","v[_i+1]+1"]
+symbols: |
+  f(_a,*b) := b[a]
+  u' := f(x,u)
+  v' := (1;1)
+  *u := u[_i]+1
+  *v := (v[_i]+1;v[_i+1]+1)
 integrator:
   Euler:
     dt: 0.001

@@ -1,16 +1,17 @@
 actions:
-  - [Moments, {Every: 30}]
-  - [StaticStructureFactor, {Interval: {from: 50, to: 70, every: 10}}]
-  - [DynamicStructureFactor, {TotalInterval: {from: 50, to: 70, total: 10}}]
+  #- [Moments, {Every: 30}]
+    #- [StaticStructureFactor, {Interval: {from: 50, to: 70, every: 10}}]
+    #- [DynamicStructureFactor, {TotalInterval: {from: 50, to: 70, total: 3}}]
+  - [Correlation, {Interval: {from: 5, to: 10, every: 1}}]
 config:
-  t_max: 100
+  t_max: 10
   dim: {D2: [[8,1],[100,0]]} #{D3: [[256,20],[16,0],[16,0]]}
   dirs: [X]
 symbols: |
-  A := 2
+  A := 1
   f(a) := a*A
   u' := (1;2)
-  *u := (f(0.5);A)
+  *u := (f(x);0)
 integrator:
   Euler:
-    dt: 0.001
+    dt: 1
