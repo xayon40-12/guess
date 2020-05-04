@@ -17,7 +17,7 @@ pub struct Vars {
     pub phy: [f64;3],
     pub dirs: Vec<DimDir>,
     pub len: usize,
-    pub dvars: Vec<String>,
+    pub dvars: Vec<(String,u32)>,
     pub noises: Option<Vec<Noises>>,
 }
 
@@ -55,7 +55,7 @@ impl Simulation {
     pub fn run(&mut self) -> gpgpu::Result<()> {
         let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises, phy: _ } = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
-        let dvars = dvars.iter().map(|i| &i[..]).collect::<Vec<_>>();
+        let dvars = dvars.iter().map(|i| &i.0[..]).collect::<Vec<_>>();
 
         let mut t = 0.0;
         for (activator,callback) in &mut self.callbacks {
@@ -109,14 +109,6 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     //that differ of 1.
     let mut time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
-    h = h.add_buffer("tmp", Len(F64(0.0), len));
-    h = h.add_buffer("sum", Len(F64(0.0), len));
-    h = h.add_buffer("sumdst", Len(F64(0.0), lensum));
-    h = h.add_buffer("moments", Len(F64(0.0), 4));
-    h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0]), len));
-    h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0]), len));
-    h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0]), len));
-    h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0]), len));
     h = h.load_algorithm("moments");
     h = h.load_algorithm("sum");
     h = h.load_algorithm("correlation");
@@ -130,7 +122,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     h = h.load_kernel("ctimes");
 
     let mut init_kernels = vec![];
-    let dvars = {
+    let (dvars,max) = {
         use SymbolsTypes::*;
         use parameters::symbols::PrmType::*;
         use gpgpu::integrators::{create_euler_pde};
@@ -299,7 +291,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
                     }
                 }
             }
-            dvars.into_iter().map(|i| i.0).collect::<Vec<_>>()
+            (dvars.into_iter().map(|(n,d)| (n,d as u32)).collect::<Vec<_>>(),max)
         } else {
             panic!("PDEs must be given.")
         }
@@ -314,6 +306,15 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
         }
     }
 
+    h = h.add_buffer("tmp", Len(F64(0.0), len*max));
+    h = h.add_buffer("sum", Len(F64(0.0), len*max));
+    h = h.add_buffer("sumdst", Len(F64(0.0), lensum*max));
+    h = h.add_buffer("moments", Len(F64(0.0), 4*max));
+    h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0]), len*max));
+    h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0]), len*max));
+    h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0]), len*max));
+    h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0]), len*max));
+
     let mut handler = h.build()?;
     if init_kernels.len()>0 {
         let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
@@ -325,7 +326,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
                 }
             }
         }
-        let args = dvars.iter().map(|n| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
+        let args = dvars.iter().map(|(n,_)| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
         for name in init_kernels {
             handler.run_arg(&name, dim, &args)?;
             handler.copy("dvar_dst", &name.replace("init_","dvar_"))?;
