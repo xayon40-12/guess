@@ -13,12 +13,28 @@ pub use symbols::SymbolsTypes;
 #[derive(Deserialize,Serialize,Debug)]
 pub enum Integrator {
     Euler{dt: f64},
+    QSS,
 }
 
 #[derive(Deserialize,Serialize,Debug)]
 pub enum Noises {
     Uniform{name: String, dim: Option<usize>},
     Normal{name: String, dim: Option<usize>},
+}
+
+impl Noises {
+    pub fn name(&self) -> String {
+        use Noises::*;
+        match self {
+            Uniform{name,..} | Normal{name,..} => name.clone(),
+        }
+    }
+    pub fn set_name(&mut self, new_name: String) {
+        use Noises::*;
+        match self {
+            Uniform{name,..} | Normal{name,..} => *name = new_name,
+        }
+    }
 }
 
 #[derive(Deserialize,Serialize,Debug)]

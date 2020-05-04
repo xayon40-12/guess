@@ -1,15 +1,21 @@
 use gpgpu::{Handler,handler::HandlerBuilder};
 use gpgpu::data_file::Format;
 use gpgpu::{Dim::{self,*},DimDir};
-use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,KernelArg::*,SFunctionConstructor::*};
+use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,KernelArg::*,SFunctionConstructor::*,KernelConstructor::*,SKernelConstructor};
+use gpgpu::integrators::{create_euler_pde,SPDE};
+use gpgpu::kernels::SKernel;
+use gpgpu::functions::SFunction;
 
 #[cfg(debug_assertions)]
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::{HashSet,HashMap};
 
 pub mod parameters;
-pub use parameters::{Callback,ActivationCallback,Param,Integrator,SymbolsTypes};
+pub use parameters::{Callback,ActivationCallback,Param,Integrator,SymbolsTypes::{self,*},symbols::PrmType::{self,*}};
 use parameters::Noises::{self,*};
+
+use regex::{Regex,Captures};
 
 pub struct Vars {
     pub t_max: f64,
@@ -121,189 +127,100 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     h = h.load_kernel("kc_times_conj");
     h = h.load_kernel("ctimes");
 
+
+    let mut consts = HashMap::new();
+    for i in (0..3).filter(|&i| phy[i] != 0.0) {
+        consts.insert(["dx","dy","dz"][i].to_string(),format!("{:e}",phy[i]/dims[i] as f64));
+        consts.insert(["ivdx","ivdy","ivdz"][i].to_string(),format!("{:e}",dims[i] as f64/phy[i]));
+    }
+
+    if let Integrator::Euler{dt} = &param.integrator {
+        consts.insert("dt".to_string(),format!("{:e}",dt));
+        consts.insert("ivdt".to_string(),format!("{:e}",1.0/dt));
+    }
+
+    let (func,pdes,init) = parse_symbols(param.symbols, consts);
+    for f in func {
+        h = h.create_function(f);
+    }
+
+    let mut noises_names = HashSet::new();
+    if let Some(noises) = &param.noises {
+        for noise in noises {
+            if !noises_names.insert(noise.name().to_string()) { panic!("Each noises must have a different name.") }
+        }
+    }
+    let noises_names = noises_names.into_iter().collect::<Vec<_>>();
+
+    if pdes.len() == 0 {
+        panic!("PDEs must be given.")
+    };
+    let mut dvars = pdes.iter().map(|i| (i.dvar.clone(),i.expr.len())).collect::<Vec<_>>();
+    match &param.integrator {
+        Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
+        Integrator::QSS => panic!("QSS not handled yet."),
+    }
+
     let mut init_kernels = vec![];
-    let (dvars,max) = {
-        use SymbolsTypes::*;
-        use parameters::symbols::PrmType::*;
-        use gpgpu::integrators::{create_euler_pde};
-        use gpgpu::functions::SFunction;
-        use gpgpu::kernels::Kernel;
-        use gpgpu::descriptors::KernelConstructor::KCBuffer;
-        use std::collections::{HashSet,HashMap};
-        use regex::Regex;
-        let mut consts_names = HashSet::new();
-        let mut consts: Vec<Box<dyn Fn(String) -> String>> = vec![];
-        for i in 0..3 {
-            if phy[i] != 0.0 {
-                let d = phy[i]/dims[i] as f64;
-                let symb = ["dx","dy","dz"][i];
-                consts_names.insert(symb.to_string());
-                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
-                let val = format!("{:e}",d);
-                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
-                let symb = ["ivdx","ivdy","ivdz"][i];
-                consts_names.insert(symb.to_string());
-                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
-                let val = format!("{:e}",1.0/d);
-                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
-            }
+    if init.len() > 0 {
+        let mut args = vec![KCBuffer("dst",CF64)];
+        args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0,CF64)));
+        args.extend(noises_names.iter().map(|n| KCBuffer(&n,CF64)));
+        let args: Vec<SKernelConstructor> = args.into_iter().map(|a| (&a).into()).collect();
+        for ini in init {
+            let len = dvars.iter().find(|(n,_)| n == &ini.name).expect(&format!("There must be a PDE corresponding to init data \"{}\"",&ini.name)).1;
+            let name = format!("init_{}", &ini.name);
+            h = h.create_kernel(gen_init_kernel(&name, len, args.clone(), ini));
+            init_kernels.push(name);
         }
-        match &param.integrator {
-            Integrator::Euler{dt} => {
-                let symb = "dt";
-                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
-                let val = format!("{:e}",dt);
-                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
-                let symb = "ivdt";
-                let re = Regex::new(&format!(r"\b{}\b",symb)).expect(&format!("Could not build regex out of {:?}.", symb));
-                let val = format!("{:e}",1.0/dt);
-                consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
-            },
-        }
-        for symb in &param.symbols {
-            match symb {
-                Constant{name,value} => {
-                    if !consts_names.insert(name.clone()) { panic!("Each constants must have a different name, repeated name: \"{}\"", name) }
-                    else {
-                        let re = Regex::new(&format!(r"\b{}\b",&name)).expect(&format!("Could not build regex out of {:?}.", symb));
-                        let val = format!("{:e}",value);
-                        consts.push(Box::new(move |s| re.replace_all(&s,&val[..]).to_string()));
-                    }
-                },
-                _ => {}
-            }
-        }
-        let replace = |s: String| {
-            let mut s = s;
-            for r in &consts {
-                s = r(s);
-            }
-            s
-        };
-        let mut pdes_dvars = None;
-        let mut noises_names = vec![];
-        let mut noises_names_set = HashSet::new();
-        if let Some(noises) = &param.noises {
-            for noise in noises {
-                match noise {
-                    Uniform{name,..} | Normal{name,..} => {
-                        noises_names.push(name.to_string());
-                        if !noises_names_set.insert(name) { panic!("Each noises must have a different name.") }
-                    },
-                }
-            }
-        }
-        let mut to_init = None;
-        for symb in param.symbols {
-            match symb {
-                Constant{..} => {},
-                Function{name,args,src} => {
-                    let args = args.into_iter().map(|a| match a.1 {
-                        Float => FCParam(a.0,CF64),
-                        Integer => FCParam(a.0,CU32),
-                        Indexable => FCGlobalPtr(a.0,CF64),
-                    }).collect::<Vec<_>>();
+    }
 
-                    h = h.create_function(SFunction {
-                        name,
-                        args,
-                        src: format!("return {};", replace(src)),
-                        ret_type: Some(CF64),
-                        needed: vec![],
-                    });
-
-                },
-                PDEs(mut pdes) => {
-                    pdes_dvars = Some(pdes.iter().map(|i| (i.dvar.clone(),i.expr.len())).collect::<Vec<_>>());
-                    pdes.iter_mut().for_each(|i| i.expr.iter_mut().for_each(|e| *e=replace(e.clone())));
-                    match &param.integrator {
-                        Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
-                    }
-                },
-                Init(init) => {
-                    to_init = Some(init);
-                },
-            }
-        }
-        let mut init: HashMap<String,Vec<f64>> = if let Some(file) = param.initial_conditions_file {
-            serde_yaml::from_str(&std::fs::read_to_string(&file).expect(&format!("Could not find initial conditions file \"{}\".", &file))).unwrap()
-        } else {
-            HashMap::new()
-        };
-        if let Some(mut dvars) = pdes_dvars {
-            if let Some(init) = to_init {
-                let mut args = vec![KCBuffer("dst",CF64)];
-                args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0,CF64)));
-                args.extend(noises_names.iter().map(|n| KCBuffer(&n,CF64)));
-                //let len = dvars.len()+noises_names.len()+1;
-                for ini in init {
-                    let mut id = "x+x_size*(y+y_size*z)".to_string();
-                    let len = dvars.iter().find(|(n,_)| n == &ini.name).expect(&format!("There must be a PDE corresponding to init data \"{}\"",&ini.name)).1;
-                    if len > 1 {
-                        id = format!("{}*({})", len, id);
-                    }
-                    let expr = if len == 1 {
-                        format!("    dst[_i] = {};\n", &ini.expr[0])
-                    } else {
-                        let mut expr = String::new();
-                        for i in 0..len {
-                            expr += &format!("    dst[{i}+_i] = {};\n", &ini.expr[i], i = i);
-                        }
-                        expr
-                    };
-                    let name = format!("init_{}", &ini.name);
-                    h = h.create_kernel(&Kernel {
-                        name: &name,
-                        args: args.clone(),
-                        src: &format!("    uint _i = {};\n{}", id, expr),
-                        needed: vec![],
-                    });
-                    init_kernels.push(name);
-                }
-            }
-
-            let mut max = 0;
-            dvars.iter_mut().for_each(|i| {
-                max = usize::max(max,i.1);
-                i.0 = format!("dvar_{}",i.0); 
-            });
-            dvars.insert(0,("dvar_dst".to_string(),max));
-            for dvar in &dvars {
-                h = h.add_buffer(&dvar.0,if let Some(data) = init.remove(&dvar.0[5..]) {
-                    if data.len() != len*dvar.1 { panic!("Data stored in initial conditions file must have as much elements as the simulation total dim. Given \"{}\" of size {} whereas total dim is {}.", dvar.0, data.len(), len*dvar.1) }
-                    Data(data.into())
-                } else {
-                    Len(F64(0.0),len*dvar.1)
-                });
-            }
-            if init.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init.keys()) }
-            if let Some(noises) = &param.noises {
-                for noise in noises {
-                    match noise {
-                        Uniform{name,dim} | Normal{name,dim} => {
-                            let dim = if let Some(d) = dim { if *d==0 { panic!("dim of noise \"{}\" must be different of 0.",name) } else { *d } } else { 1 };
-                            let l = len*dim;
-                            h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
-                            time += 1;
-                            h = h.add_buffer(name,Len(F64(0.0),l));
-                            dvars.push((name.clone(),dim));
-                        },
-                    }
-                }
-            }
-            (dvars.into_iter().map(|(n,d)| (n,d as u32)).collect::<Vec<_>>(),max)
-        } else {
-            panic!("PDEs must be given.")
-        }
+    let mut init_file: HashMap<String,Vec<f64>> = if let Some(file) = param.initial_conditions_file {
+        serde_yaml::from_str(
+            &std::fs::read_to_string(&file)
+            .expect(&format!("Could not find initial conditions file \"{}\".", &file))
+        ).unwrap()
+    } else {
+        HashMap::new()
     };
 
-    if let Some(noises) = &mut param.noises {
+    let mut max = 0;
+    dvars.iter_mut().for_each(|i| {
+        max = usize::max(max,i.1);
+        i.0 = format!("dvar_{}",i.0); 
+    });
+    dvars.insert(0,("dvar_dst".to_string(),max));
+    for dvar in &dvars {
+        let data = init_file.remove(&dvar.0[5..])
+            .and_then(|d| {
+                if d.len() != len*dvar.1 {
+                    panic!("Data stored in initial conditions file must have as much elements as the simulation total dim. Given \"{}\" of size {} whereas total dim is {}.", dvar.0, d.len(), len*dvar.1)
+                }
+                Some(Data(d.into()))
+            }).unwrap_or(Len(F64(0.0),len*dvar.1));
+        h = h.add_buffer(&dvar.0,data);
+    }
+
+    if init_file.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys()) }
+    if let Some(noises) = &param.noises {
         for noise in noises {
             match noise {
-                Uniform{name,..} => *name = format!("src{}",name),
-                Normal{name,..} => *name = format!("src{}",name),
+                Uniform{name,dim} | Normal{name,dim} => {
+                    let dim = dim.unwrap_or(1);
+                    if dim == 0 { panic!("dim of noise \"{}\" must be different of 0.",name) }
+                    let l = len*dim;
+                    h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
+                    time += 1;//TODO use U64_2 and another incrementer insted
+                    h = h.add_buffer(name,Len(F64(0.0),l));
+                    dvars.push((name.clone(),dim));
+                },
             }
         }
+    }
+    let dvars = dvars.into_iter().map(|(n,d)| (n,d as u32)).collect::<Vec<_>>();
+
+    if let Some(noises) = &mut param.noises {
+        noises.iter_mut().for_each(|n| n.set_name(format!("src{}", n.name())));
     }
 
     h = h.add_buffer("tmp", Len(F64(0.0), len*max));
@@ -337,4 +254,134 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param) -> gpgpu::Result<Sim
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
 
     Ok(Simulation { handler, callbacks, vars })
+}
+
+fn gen_func(name: String, args: Vec<(String,PrmType)>, src: String) -> SFunction {
+    let args = args.into_iter().map(|a| match a.1 {
+        Float => FCParam(a.0,CF64),
+        Integer => FCParam(a.0,CU32),
+        Indexable => FCGlobalPtr(a.0,CF64),
+    }).collect::<Vec<_>>();
+
+    SFunction {
+        name,
+        args,
+        src: format!("return {};", src),
+        ret_type: Some(CF64),
+        needed: vec![],
+    }
+}
+
+fn gen_init_kernel<'a>(name: &'a str, len: usize, args: Vec<SKernelConstructor>, ini: parameters::symbols::Init) -> SKernel {
+    let mut id = "x+x_size*(y+y_size*z)".to_string();
+    if len > 1 {
+        id = format!("{}*({})", len, id);
+    }
+    let expr = if len == 1 {
+        format!("    dst[_i] = {};\n", &ini.expr[0])
+    } else {
+        let mut expr = String::new();
+        for i in 0..len {
+            expr += &format!("    dst[{i}+_i] = {};\n", &ini.expr[i], i = i);
+        }
+        expr
+    };
+    SKernel {
+        name: name.to_string(),
+        args: args,
+        src: format!("    uint _i = {};\n{}", id, expr),
+        needed: vec![],
+    }
+}
+
+fn parse_symbols(symbols: Vec<SymbolsTypes>, mut consts: HashMap<String,String>) -> (Vec<SFunction>,Vec<SPDE>,Vec<parameters::symbols::Init>) {
+    let re = Regex::new(r"\b\w+\b").unwrap();
+    let replace = |src: &str, consts: &HashMap<String,String>| re.replace_all(src, |caps: &Captures| {
+        consts.get(&caps[0]).unwrap_or(&caps[0].to_string()).clone()
+    }).to_string();
+
+    let mut func = vec![];
+    let mut pdes = vec![];
+    let mut init = vec![];
+
+    let search_const = Regex::new(r"^\s*(\w+)\s*=\s*(.+?)\s*$").unwrap();
+    let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s*(:?)=\s*(.+?)\s*$").unwrap();
+    let search_pde = Regex::new(r"^\s*(\w+)'\s*(:?)=\s*(.+?)\s*$").unwrap();
+    let search_init = Regex::new(r"^\s*\*(\w+)\s*(:?)=\s*(.+?)\s*$").unwrap();
+
+    let symb = "
+    A =  3 
+    ffff(a , b, c,d) := a*b + c
+    uuuu' := f(1,2,3,4)*A
+    *uuuu := 1
+        ";
+
+    for l in symb.lines() {
+        if let Some(caps) = search_const.captures(l) {
+            consts.insert(caps[1].into(),caps[2].into());
+        }
+        if let Some(caps) = search_func.captures(l) {
+            let name = caps[1].into();
+            let args = caps[2].split(",").map(|i| {
+                let val = i.trim().to_string();
+                if val.starts_with("_") {
+                    (val[1..].to_string(),Integer)
+                } else if val.starts_with("*") {
+                    (val[1..].to_string(),Indexable)
+                } else {
+                    (val,Float)
+                }
+            }).collect();
+            let src = if &caps[3] == ":" {
+                replace(&caps[4],&consts)
+            } else {
+                panic!("Interpeter not supported yet.")
+            };
+            func.push(gen_func(name,args,src))
+        }
+        if let Some(caps) = search_pde.captures(l) {
+            let dvar = caps[1].into();
+            let expr = if &caps[2] == ":" {
+                let src = replace(&caps[3],&consts);
+                if src.starts_with("[") && src.ends_with("]") {
+                    //src[1..src.len()-2].split(",").map(|i| i.trim().to_string()).collect()
+                    panic!("pde [...] not handled yet");
+                } else {
+                    vec![src]
+                }
+            } else {
+                panic!("Interpeter not supported yet.")
+            };
+            pdes.push(SPDE {dvar, expr});
+        }
+        if let Some(caps) = search_init.captures(l) {
+            let name = caps[1].into();
+            let expr = if &caps[2] == ":" {
+                let src = replace(&caps[3],&consts);
+                if src.starts_with("[") && src.ends_with("]") {
+                    //src[1..src.len()-2].split(",").map(|i| i.trim().to_string()).collect()
+                    panic!("init [...] not handled yet");
+                } else {
+                    vec![src]
+                }
+            } else {
+                panic!("Interpeter not supported yet.")
+            };
+            init.push(parameters::symbols::Init {name, expr});
+        }
+    }
+
+
+    for symb in symbols {
+        match symb {
+            Constant{name,value} => { consts.insert(name,value); },
+            Function{name,args,src} => func.push(gen_func(name,args,replace(&src,&consts))),
+            PDEs(_pdes) => pdes = _pdes,
+            Init(_init) => init = _init,
+        }
+    }
+
+    pdes.iter_mut().for_each(|i| i.expr.iter_mut().for_each(|e| *e=replace(e,&consts)));
+
+    (func,pdes,init)
 }
