@@ -273,6 +273,9 @@ fn gen_func(name: String, args: Vec<(String,PrmType)>, src: String) -> SFunction
 }
 
 fn gen_init_kernel<'a>(name: &'a str, len: usize, args: Vec<SKernelConstructor>, ini: parameters::symbols::Init) -> SKernel {
+    if len != ini.expr.len() {
+        panic!("Then dim of the initial condition should be the same as the dpe, name: \"{}\"", name);
+    }
     let mut id = "x+x_size*(y+y_size*z)".to_string();
     if len > 1 {
         id = format!("{}*({})", len, id);
@@ -294,7 +297,7 @@ fn gen_init_kernel<'a>(name: &'a str, len: usize, args: Vec<SKernelConstructor>,
     }
 }
 
-fn parse_symbols(symbols: Vec<SymbolsTypes>, mut consts: HashMap<String,String>) -> (Vec<SFunction>,Vec<SPDE>,Vec<parameters::symbols::Init>) {
+fn parse_symbols(symbols: String, mut consts: HashMap<String,String>) -> (Vec<SFunction>,Vec<SPDE>,Vec<parameters::symbols::Init>) {
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String,String>| re.replace_all(src, |caps: &Captures| {
         consts.get(&caps[0]).unwrap_or(&caps[0].to_string()).clone()
@@ -304,21 +307,20 @@ fn parse_symbols(symbols: Vec<SymbolsTypes>, mut consts: HashMap<String,String>)
     let mut pdes = vec![];
     let mut init = vec![];
 
-    let search_const = Regex::new(r"^\s*(\w+)\s*=\s*(.+?)\s*$").unwrap();
+    let search_const = Regex::new(r"^\s*(\w+)\s*(:?)=\s*(.+?)\s*$").unwrap();
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s*(:?)=\s*(.+?)\s*$").unwrap();
     let search_pde = Regex::new(r"^\s*(\w+)'\s*(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s*(:?)=\s*(.+?)\s*$").unwrap();
 
-    let symb = "
-    A =  3 
-    ffff(a , b, c,d) := a*b + c
-    uuuu' := f(1,2,3,4)*A
-    *uuuu := 1
-        ";
-
-    for l in symb.lines() {
+    for l in symbols.lines() {
         if let Some(caps) = search_const.captures(l) {
-            consts.insert(caps[1].into(),caps[2].into());
+            let name = caps[1].into();
+            let src = if &caps[2] == ":" {
+                caps[3].into()
+            } else {
+                panic!("Interpeter not supported yet.")
+            };
+            consts.insert(name,src);
         }
         if let Some(caps) = search_func.captures(l) {
             let name = caps[1].into();
@@ -343,9 +345,8 @@ fn parse_symbols(symbols: Vec<SymbolsTypes>, mut consts: HashMap<String,String>)
             let dvar = caps[1].into();
             let expr = if &caps[2] == ":" {
                 let src = replace(&caps[3],&consts);
-                if src.starts_with("[") && src.ends_with("]") {
-                    //src[1..src.len()-2].split(",").map(|i| i.trim().to_string()).collect()
-                    panic!("pde [...] not handled yet");
+                if src.starts_with("(") && src.ends_with(")") {
+                    src[1..src.len()-1].split(";").map(|i| i.trim().to_string()).collect()
                 } else {
                     vec![src]
                 }
@@ -358,9 +359,8 @@ fn parse_symbols(symbols: Vec<SymbolsTypes>, mut consts: HashMap<String,String>)
             let name = caps[1].into();
             let expr = if &caps[2] == ":" {
                 let src = replace(&caps[3],&consts);
-                if src.starts_with("[") && src.ends_with("]") {
-                    //src[1..src.len()-2].split(",").map(|i| i.trim().to_string()).collect()
-                    panic!("init [...] not handled yet");
+                if src.starts_with("(") && src.ends_with(")") {
+                    src[1..src.len()-1].split(";").map(|i| i.trim().to_string()).collect()
                 } else {
                     vec![src]
                 }
@@ -368,16 +368,6 @@ fn parse_symbols(symbols: Vec<SymbolsTypes>, mut consts: HashMap<String,String>)
                 panic!("Interpeter not supported yet.")
             };
             init.push(parameters::symbols::Init {name, expr});
-        }
-    }
-
-
-    for symb in symbols {
-        match symb {
-            Constant{name,value} => { consts.insert(name,value); },
-            Function{name,args,src} => func.push(gen_func(name,args,replace(&src,&consts))),
-            PDEs(_pdes) => pdes = _pdes,
-            Init(_init) => init = _init,
         }
     }
 

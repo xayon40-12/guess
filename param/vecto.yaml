@@ -6,10 +6,11 @@ config:
   t_max: 100
   dim: {D2: [[8,1],[100,0]]} #{D3: [[256,20],[16,0],[16,0]]}
   dirs: [X]
-symbols:
-  - PDEs:
-      - dvar: u
-        expr: ["1","2"]
+symbols: |
+  A := 2
+  f(a) := a*A
+  u' := (1;2)
+  *u := (f(0.5);A)
 integrator:
   Euler:
     dt: 0.001

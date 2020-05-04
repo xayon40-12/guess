@@ -42,7 +42,7 @@ pub struct Param {
     pub data_files: Option<Vec<String>>,
     pub actions: Vec<(Action,Repetition)>,
     pub noises: Option<Vec<Noises>>,
-    pub symbols: Vec<SymbolsTypes>,
+    pub symbols: String,
     pub config: Config,
     pub integrator: Integrator,
     pub initial_conditions_file: Option<String>,
