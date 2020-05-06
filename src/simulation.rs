@@ -2,9 +2,10 @@ use gpgpu::{Handler,handler::HandlerBuilder};
 use gpgpu::data_file::Format;
 use gpgpu::{Dim::{self,*},DimDir};
 use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,KernelArg::*,SFunctionConstructor::*,KernelConstructor::*,SKernelConstructor};
-use gpgpu::integrators::{create_euler_pde,SPDE};
+use gpgpu::integrators::{create_euler_pde,SPDE,IntegratorParam};
 use gpgpu::kernels::SKernel;
 use gpgpu::functions::SFunction;
+use gpgpu::algorithms::AlgorithmParam::*;
 
 #[cfg(debug_assertions)]
 use std::io::Write;
@@ -66,19 +67,23 @@ impl Simulation {
         let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
         let dvars = dvars.iter().map(|i| &i.0[..]).collect::<Vec<_>>();
 
-        let mut t = 0.0;
+        let mut intprm = IntegratorParam {
+            t: 0.0,
+            swap: 0,
+            args: vec![("t".to_string(),F64(0.0))],
+        };
         for (activator,callback) in &mut self.callbacks {
-            if activator(t) {
-                callback(&mut self.handler, &self.vars, t)?;
+            if activator(intprm.t) {
+                callback(&mut self.handler, &self.vars, intprm.swap, intprm.t)?;
             }
         }
         #[cfg(debug_assertions)]
-        let (mut pred,int) = (t,t_max/100.0);
-        while t<t_max {
+        let (mut pred,int) = (intprm.t,t_max/100.0);
+        while intprm.t<t_max {
             #[cfg(debug_assertions)]
-            if t>=pred+int {
-                pred = t;
-                print!(" {}%\r",f64::trunc(t/int)); std::io::stdout().lock().flush().unwrap(); 
+            if intprm.t>=pred+int {
+                pred = intprm.t;
+                print!(" {}%\r",f64::trunc(intprm.t/int)); std::io::stdout().lock().flush().unwrap(); 
             }
             if let Some(noises) = noises {
                 for noise in noises {
@@ -89,11 +94,13 @@ impl Simulation {
                 }
             }
 
-            t = *self.handler.run_algorithm("integrator",dim,&[],&dvars[..],Some(&(t,vec![("t".to_string(),F64(t))])))?.unwrap().downcast_ref::<f64>().unwrap();
+            self.handler.run_algorithm("integrator",dim,&[],&dvars,Mut(&mut intprm))?;
+            intprm.args[0].1 = F64(intprm.t);
+            intprm.swap = 1-intprm.swap;
 
             for (activator,callback) in &mut self.callbacks {
-                if activator(t) {
-                    callback(&mut self.handler, &self.vars, t)?;
+                if activator(intprm.t) {
+                    callback(&mut self.handler, &self.vars, intprm.swap, intprm.t)?;
                 }
             }
         }
@@ -188,11 +195,15 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
     };
 
     let mut max = 0;
+    let mut name_to_index = HashMap::new();
+    let mut index = 0;
+    let num_pdes = dvars.len();
     dvars.iter_mut().for_each(|i| {
         max = usize::max(max,i.1);
+        name_to_index.insert(i.0.clone(),index);
+        index += 2;
         i.0 = format!("dvar_{}",i.0); 
     });
-    dvars.insert(0,("dvar_dst".to_string(),max));
     for dvar in &dvars {
         let data = init_file.remove(&dvar.0[5..])
             .and_then(|d| {
@@ -202,9 +213,11 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
                 Some(Data(d.into()))
             }).unwrap_or(Len(F64(0.0),len*dvar.1));
         h = h.add_buffer(&dvar.0,data);
+        h = h.add_buffer(&format!("swap_{}",&dvar.0),Len(F64(0.0),len*dvar.1));
     }
-
     if init_file.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys()) }
+    let mut dvars = dvars.into_iter().flat_map(|i| vec![i.clone(),(format!("swap_{}",&i.0),i.1)].into_iter()).collect::<Vec<_>>();
+
     if let Some(noises) = &param.noises {
         for noise in noises {
             match noise {
@@ -216,6 +229,8 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
                     time += 1;//TODO use U64_2 and another incrementer insted
                     h = h.add_buffer(name,Len(F64(0.0),l));
                     dvars.push((name.clone(),dim));
+                    name_to_index.insert(name.clone(),index);
+                    index += 1;
                 },
             }
         }
@@ -254,7 +269,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
     }
 
     let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises, phy, parent };
-    let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback())).collect();
+    let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback(&name_to_index,num_pdes))).collect();
 
     Ok(Simulation { handler, callbacks, vars })
 }
