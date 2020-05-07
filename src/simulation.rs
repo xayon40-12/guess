@@ -18,6 +18,13 @@ use parameters::Noises::{self,*};
 
 use regex::{Regex,Captures};
 
+pub enum NumType {
+    Single(usize),
+    Multiple(usize),
+    NoNum,
+}
+use NumType::*;
+
 pub struct Vars {
     pub t_max: f64,
     pub dim: Dim,
@@ -36,30 +43,55 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn from_param<'a>(file_name: &'a str) -> gpgpu::Result<Self> {
-        let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).unwrap();
-        let directory = std::path::Path::new(file_name);
-        if let Some(directory) = directory.parent() {
-            if directory.exists() {
-                std::env::set_current_dir(&directory).expect(&format!("Could not change directory to \"{:?}\"",&directory));
-            }
-        }
+    pub fn from_param<'a>(file_name: &'a str, num: NumType, check: bool) -> gpgpu::Result<()> {
+        let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).expect(&format!("Could not convert yaml in file \"{}\".", file_name));
+        //let directory = std::path::Path::new(file_name);
+        //if let Some(directory) = directory.parent() {
+        //    if directory.exists() {
+        //        std::env::set_current_dir(&directory).expect(&format!("Could not change directory to \"{:?}\"",&directory));
+        //    }
+        //}
 
         let mut handler = Handler::builder()?;
+        let parent = if let Some(i) = file_name.find('.') { &file_name[..i] } else { file_name }.to_string();
+        if check {
+            extract_symbols(handler, param, parent, true)?;
+            return Ok(());
+        }
 
+        let upparent = if parent.len()>0 { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
         if let Some(data_files) = &param.data_files {
             for f in data_files {
                 let name = if let Some(i) = f.find('.') { &f[..i] } else { f };
                 let name = if let Some(i) = name.rfind('/') { &name[i+1..] } else { name };
-                handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(f).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
+                handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(&format!("{}/{}",&upparent,f)).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
             }
         }
 
-        let parent = if let Some(i) = file_name.find('.') { &file_name[..i] } else { file_name };
-        let parent = if let Some(i) = parent.rfind('/') { &parent[i+1..] } else { parent };
-        let target = std::path::Path::new(parent);
-        std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
-        extract_symbols(handler, param, parent.into())
+        let run = |parent: &String| {
+            let target = std::path::Path::new(&parent);
+            std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
+            if let Some(mut sim) = extract_symbols(handler.clone(), param.clone(), parent.clone(), false)? {
+                sim.run()?;
+            }
+            Ok(())
+        };
+        match num {
+            Single(n) => {
+                let parent = format!("{}{}", parent, n);
+                run(&parent)
+            },
+            Multiple(n) => {
+                for i in 0..n {
+                    let parent = format!("{}{}", parent, i);
+                    run(&parent)?;
+                }
+                Ok(())
+            },
+            NoNum => {
+                run(&parent)
+            },
+        }
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
@@ -96,7 +128,6 @@ impl Simulation {
 
             self.handler.run_algorithm("integrator",dim,&[],&dvars,Mut(&mut intprm))?;
             intprm.args[0].1 = F64(intprm.t);
-            intprm.swap = 1-intprm.swap;
 
             for (activator,callback) in &mut self.callbacks {
                 if activator(intprm.t) {
@@ -109,7 +140,9 @@ impl Simulation {
     }
 }
 
-fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> gpgpu::Result<Simulation> {
+fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, check: bool) -> gpgpu::Result<Option<Simulation>> {
+
+    let upparent = if parent.len()>0 { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
 
     let (dims,phy) = param.config.dim.into();
     let dim: Dim = dims.into();
@@ -187,7 +220,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
 
     let mut init_file: HashMap<String,Vec<f64>> = if let Some(file) = param.initial_conditions_file {
         serde_yaml::from_str(
-            &std::fs::read_to_string(&file)
+            &std::fs::read_to_string(&format!("{}{}",upparent,file))
             .expect(&format!("Could not find initial conditions file \"{}\".", &file))
         ).unwrap()
     } else {
@@ -212,8 +245,10 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
                 }
                 Some(Data(d.into()))
             }).unwrap_or(Len(F64(0.0),len*dvar.1));
-        h = h.add_buffer(&dvar.0,data);
-        h = h.add_buffer(&format!("swap_{}",&dvar.0),Len(F64(0.0),len*dvar.1));
+        if !check {
+            h = h.add_buffer(&dvar.0,data);
+            h = h.add_buffer(&format!("swap_{}",&dvar.0),Len(F64(0.0),len*dvar.1));
+        }
     }
     if init_file.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys()) }
     let mut dvars = dvars.into_iter().flat_map(|i| vec![i.clone(),(format!("swap_{}",&i.0),i.1)].into_iter()).collect::<Vec<_>>();
@@ -225,9 +260,11 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
                     let dim = dim.unwrap_or(1);
                     if dim == 0 { panic!("dim of noise \"{}\" must be different of 0.",name) }
                     let l = len*dim;
-                    h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
+                    if !check {
+                        h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
+                        h = h.add_buffer(name,Len(F64(0.0),l));
+                    }
                     time += 1;//TODO use U64_2 and another incrementer insted
-                    h = h.add_buffer(name,Len(F64(0.0),l));
                     dvars.push((name.clone(),dim));
                     name_to_index.insert(name.clone(),index);
                     index += 1;
@@ -235,6 +272,10 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
             }
         }
     }
+    if check { 
+        println!("{}", h.source_code());
+        return Ok(None);
+    };
     let dvars = dvars.into_iter().map(|(n,d)| (n,d as u32)).collect::<Vec<_>>();
 
     if let Some(noises) = &mut param.noises {
@@ -261,17 +302,20 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String) -> g
                 }
             }
         }
-        let args = dvars.iter().map(|(n,_)| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
-        for name in init_kernels {
-            handler.run_arg(&name, dim, &args)?;
-            handler.copy("dvar_dst", &name.replace("init_","dvar_"))?;
+        let mut args = dvars.iter().filter(|(n,_)| !n.starts_with("swap_")).map(|(n,_)| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
+        args.insert(0, BufArg("",""));
+        let init_kernels = init_kernels.iter().map(|n| (n.clone(), n.replace("init_","swap_dvar_").to_string())).collect::<Vec<_>>();
+        for (name,swap_name) in &init_kernels {
+            args[0] = BufArg(swap_name,"dst");
+            handler.run_arg(name, dim, &args)?;
+            handler.copy(&swap_name, &name.replace("init_","dvar_"))?;
         }
     }
 
     let vars = Vars { t_max, dim, dirs, len, dvars, noises: param.noises, phy, parent };
     let callbacks = param.actions.into_iter().map(|(c,a)| (a.to_activation(),c.to_callback(&name_to_index,num_pdes))).collect();
 
-    Ok(Simulation { handler, callbacks, vars })
+    Ok(Some(Simulation { handler, callbacks, vars }))
 }
 
 fn gen_func(name: String, args: Vec<(String,PrmType)>, src: String) -> SFunction {

@@ -1,6 +1,6 @@
 initial_conditions_file: init_cond.init
 actions:
-  - [Moments, {Every: 1}]
+  - [Moments: [u], {Every: 1}]
 config:
   t_max: 3.1
   dim: {D1: [8,1]}

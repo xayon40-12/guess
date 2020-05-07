@@ -6,7 +6,7 @@ use gpgpu::Dim::*;
 use gpgpu::descriptors::KernelArg::*;
 use std::collections::HashMap;
 
-#[derive(Deserialize,Serialize,Debug)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum Action {
     Moments(Vec<String>),
     StaticStructureFactor(Vec<String>),

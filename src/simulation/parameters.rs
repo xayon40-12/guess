@@ -10,13 +10,13 @@ pub use activations::ActivationCallback;
 pub mod symbols;
 pub use symbols::SymbolsTypes;
 
-#[derive(Deserialize,Serialize,Debug)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum Integrator {
     Euler{dt: f64},
     QSS,
 }
 
-#[derive(Deserialize,Serialize,Debug)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum Noises {
     Uniform{name: String, dim: Option<usize>},
     Normal{name: String, dim: Option<usize>},
@@ -37,7 +37,7 @@ impl Noises {
     }
 }
 
-#[derive(Deserialize,Serialize,Debug)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub struct Param {
     pub data_files: Option<Vec<String>>,
     pub actions: Vec<(Action,Repetition)>,
@@ -48,7 +48,7 @@ pub struct Param {
     pub initial_conditions_file: Option<String>,
 }
 
-#[derive(Deserialize,Serialize,Debug)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum DimPhy {
     D1((usize,f64)),
     D2((usize,f64),(usize,f64)),
@@ -65,7 +65,7 @@ impl From<DimPhy> for ([usize;3],[f64;3]) {
     }
 }
 
-#[derive(Deserialize,Serialize,Debug)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 pub struct Config {
     pub t_max: f64,
     pub dim: DimPhy,
