@@ -59,12 +59,12 @@ impl Simulation {
             return Ok(());
         }
 
-        let upparent = if parent.len()>0 { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
+        let upparent = if parent.rfind('/').is_some() { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
         if let Some(data_files) = &param.data_files {
             for f in data_files {
                 let name = if let Some(i) = f.find('.') { &f[..i] } else { f };
                 let name = if let Some(i) = name.rfind('/') { &name[i+1..] } else { name };
-                handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(&format!("{}/{}",&upparent,f)).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
+                handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(&format!("{}{}",&upparent,f)).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
             }
         }
 
@@ -142,7 +142,7 @@ impl Simulation {
 
 fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, check: bool) -> gpgpu::Result<Option<Simulation>> {
 
-    let upparent = if parent.len()>0 { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
+    let upparent = if parent.rfind('/').is_some() { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
 
     let (dims,phy) = param.config.dim.into();
     let dim: Dim = dims.into();
