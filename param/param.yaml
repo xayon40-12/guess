@@ -13,7 +13,9 @@ noises:
       name: xi
 symbols: |
   D := 1
-  u' := D*m2(0.15)*(u[(x+1)%x_size+y*x_size]-2*u[x+y*x_size]+u[(x+x_size-1)%x_size+y*x_size])*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(xi[(x+1)%x_size+y*x_size]-xi[x+y*x_size])*ivdx
+  c(a) := 1
+  b(_x,*u) := u[x%x_size+y*x_size]
+  u' := D*m2(0.15)*(b(x+1,u)-2*b(x,u)+b(x+x_size-1,u))*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(b(x+1,xi)-b(x,xi))*ivdx
 integrator:
   Euler:
     dt: 0.001

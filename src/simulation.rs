@@ -319,16 +319,35 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
 }
 
 fn gen_func(name: String, args: Vec<(String,PrmType)>, src: String) -> SFunction {
-    let args = args.into_iter().map(|a| match a.1 {
-        Float => FCParam(a.0,CF64),
-        Integer => FCParam(a.0,CU32),
-        Indexable => FCGlobalPtr(a.0,CF64),
+    let mut to_add: HashMap<String,String> = [
+        ("x","get_global_id(0)"),
+        ("y","get_global_id(1)"),
+        ("z","get_global_id(2)"),
+        ("x_size","get_global_size(0)"),
+        ("y_size","get_global_size(1)"),
+        ("z_size","get_global_size(2)")
+    ].iter().map(|(a,b)| (a.to_string(),b.to_string())).collect();
+
+    let args = args.into_iter().map(|a| {
+        to_add.remove(&a.0);
+        match a.1 {
+            Float => FCParam(a.0,CF64),
+            Integer => FCParam(a.0,CU32),
+            Indexable => FCGlobalPtr(a.0,CF64),
+        }
     }).collect::<Vec<_>>();
+
+    let mut globals = String::new();
+    let mut to_add = to_add.iter().collect::<Vec<_>>();
+    to_add.sort();
+    for g in to_add {
+        globals += &format!("    uint {} = {};\n", g.0, g.1);
+    }
 
     SFunction {
         name,
         args,
-        src: format!("return {};", src),
+        src: format!("{}    return {};", globals, src),
         ret_type: Some(CF64),
         needed: vec![],
     }
