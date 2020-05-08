@@ -1,0 +1,8 @@
+#/bin/bash
+
+if [ "$#" -ge 1 ]; then
+    run=$(pwd)/$(echo $@ | sed -e "s# # $(pwd)/#g")
+    echo qsub -P P_nantheo -l GPU=1 -l GPUtype=K80 -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN="'$run'" "$(which ushf_sub)"
+else
+    ushf
+fi
