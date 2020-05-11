@@ -152,8 +152,8 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     let mut sumdims = dims.clone();
     dirs.iter().for_each(|d| sumdims[*d as usize] = 1);
     let len = dims[0]*dims[1]*dims[2];
-    let mut lensum = len/(sumdims[0]*sumdims[1]*sumdims[2]);
-    if lensum != len { lensum *= 2; }// to add variance
+    let lensum = 2*len/(sumdims[0]*sumdims[1]*sumdims[2]);
+    let momsum = 4*sumdims[0]*sumdims[1]*sumdims[2];
 
     //TODO verify that there is no link between two noise that start whith an initial condition
     //that differ of 1.
@@ -286,11 +286,19 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     h = h.add_buffer("tmp", Len(F64(0.0), len*max));
     h = h.add_buffer("sum", Len(F64(0.0), len*max));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum*max));
-    h = h.add_buffer("moments", Len(F64(0.0), 4*max));
+    h = h.add_buffer("moments", Len(F64(0.0), momsum*max));
+    h = h.add_buffer("summoments", Len(F64(0.0), momsum*max));
     h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0]), len*max));
     h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0]), len*max));
     h = h.add_buffer("dstFFT", Len(F64_2([0.0,0.0]), len*max));
     h = h.add_buffer("initFFT", Len(F64_2([0.0,0.0]), len*max));
+
+    h = h.create_kernel(SKernel{
+        name: "to_var".into(),
+        args: vec![(&KCBuffer("src",CF64)).into()],
+        src: "    src[x+x_size] = sqrt(src[x+x_size]-src[x]*src[x]);".into(),
+        needed: vec![],
+    });
 
     let mut handler = h.build()?;
     if init_kernels.len()>0 {
