@@ -7,8 +7,19 @@ pub mod actions;
 pub use actions::Callback;
 pub mod activations;
 pub use activations::ActivationCallback;
-pub mod symbols;
-pub use symbols::SymbolsTypes;
+
+#[derive(Deserialize,Serialize,Debug,Clone)]
+pub struct Init {
+    pub name: String,
+    pub expr: Vec<String>,
+}
+
+#[derive(Deserialize,Serialize,Debug,Clone)]
+pub enum PrmType {
+    Float,
+    Integer,
+    Indexable,
+}
 
 #[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum Integrator {
@@ -38,17 +49,6 @@ impl Noises {
 }
 
 #[derive(Deserialize,Serialize,Debug,Clone)]
-pub struct Param {
-    pub data_files: Option<Vec<String>>,
-    pub actions: Vec<(Action,Repetition)>,
-    pub noises: Option<Vec<Noises>>,
-    pub symbols: String,
-    pub config: Config,
-    pub integrator: Integrator,
-    pub initial_conditions_file: Option<String>,
-}
-
-#[derive(Deserialize,Serialize,Debug,Clone)]
 pub enum DimPhy {
     D1((usize,f64)),
     D2((usize,f64),(usize,f64)),
@@ -72,3 +72,13 @@ pub struct Config {
     pub dirs: Vec<DimDir>,
 }
 
+#[derive(Deserialize,Serialize,Debug,Clone)]
+pub struct Param {
+    pub data_files: Option<Vec<String>>,
+    pub actions: Vec<(Action,Repetition)>,
+    pub noises: Option<Vec<Noises>>,
+    pub symbols: String,
+    pub config: Config,
+    pub integrator: Integrator,
+    pub initial_conditions_file: Option<String>,
+}

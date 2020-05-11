@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::{HashSet,HashMap};
 
 pub mod parameters;
-pub use parameters::{Callback,ActivationCallback,Param,Integrator,SymbolsTypes::{self,*},symbols::PrmType::{self,*}};
+pub use parameters::{Callback,ActivationCallback,Param,Integrator,PrmType::{self,*},Init};
 use parameters::Noises::{self,*};
 
 use regex::{Regex,Captures};
@@ -152,7 +152,8 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     let mut sumdims = dims.clone();
     dirs.iter().for_each(|d| sumdims[*d as usize] = 1);
     let len = dims[0]*dims[1]*dims[2];
-    let lensum = sumdims[0]*sumdims[1]*sumdims[2];
+    let mut lensum = len/(sumdims[0]*sumdims[1]*sumdims[2]);
+    if lensum != len { lensum *= 2; }// to add variance
 
     //TODO verify that there is no link between two noise that start whith an initial condition
     //that differ of 1.
@@ -353,7 +354,7 @@ fn gen_func(name: String, args: Vec<(String,PrmType)>, src: String) -> SFunction
     }
 }
 
-fn gen_init_kernel<'a>(name: &'a str, len: usize, args: Vec<SKernelConstructor>, ini: parameters::symbols::Init) -> SKernel {
+fn gen_init_kernel<'a>(name: &'a str, len: usize, args: Vec<SKernelConstructor>, ini: Init) -> SKernel {
     if len != ini.expr.len() {
         panic!("Then dim of the initial condition should be the same as the dpe, name: \"{}\"", name);
     }
@@ -378,7 +379,7 @@ fn gen_init_kernel<'a>(name: &'a str, len: usize, args: Vec<SKernelConstructor>,
     }
 }
 
-fn parse_symbols(symbols: String, mut consts: HashMap<String,String>) -> (Vec<SFunction>,Vec<SPDE>,Vec<parameters::symbols::Init>) {
+fn parse_symbols(symbols: String, mut consts: HashMap<String,String>) -> (Vec<SFunction>,Vec<SPDE>,Vec<Init>) {
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String,String>| re.replace_all(src, |caps: &Captures| {
         consts.get(&caps[0]).unwrap_or(&caps[0].to_string()).clone()
@@ -448,7 +449,7 @@ fn parse_symbols(symbols: String, mut consts: HashMap<String,String>) -> (Vec<SF
             } else {
                 panic!("Interpeter not supported yet.")
             };
-            init.push(parameters::symbols::Init {name, expr});
+            init.push(Init {name, expr});
         }
     }
 
