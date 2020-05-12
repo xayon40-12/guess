@@ -49,7 +49,7 @@ fn moms(w: u32, vars: &Vars, bufs: &[&'static str], h: &mut gpgpu::Handler, comp
     let mut dirs = vars.dim.all_dirs();
     dirs.retain(|v| !vars.dirs.contains(&v));
     let mul = if complex { 2 } else { 1 };
-    let prm = MomentsParam{ num: 2, vect_dim: w*mul, packed: false };
+    let prm = MomentsParam{ num: 2, vect_dim: w*mul, packed: false, window: None };
     h.run_algorithm("moments", dim.into(),&dirs, bufs, Ref(&prm))?;
     dirs.iter().for_each(|d| dim[*d as usize] = 1);
     let len = dim[0]*dim[1]*dim[2];
@@ -75,13 +75,13 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
         match self {
             Moments(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
-                let prm = MomentsParam{ num: 4, vect_dim: w, packed: true };
+                let prm = MomentsParam{ num: 4, vect_dim: w, packed: true, window: None };
                 h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let mut dim: [usize;3] = vars.dim.into();
                     vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                     let len = dim[0]*dim[1]*dim[2];
-                    let prm = MomentsParam{ num: 2, vect_dim: w, packed: false };
+                    let prm = MomentsParam{ num: 2, vect_dim: w, packed: false, window: None };
                     h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",4u32.into())])?;
                     h.run_algorithm("moments", D2(4,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;
                     h.run_arg("to_var",D1(4*w as usize),&[BufArg("sumdst","src")])?;
