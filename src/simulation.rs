@@ -153,7 +153,8 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     dirs.iter().for_each(|d| sumdims[*d as usize] = 1);
     let len = dims[0]*dims[1]*dims[2];
     let lensum = 2*len/(sumdims[0]*sumdims[1]*sumdims[2]);
-    let momsum = 4*sumdims[0]*sumdims[1]*sumdims[2];
+    let num = 4;
+    let momsum = num*sumdims[0]*sumdims[1]*sumdims[2];
 
     //TODO verify that there is no link between two noise that start whith an initial condition
     //that differ of 1.

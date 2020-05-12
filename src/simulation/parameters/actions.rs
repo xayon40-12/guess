@@ -1,6 +1,6 @@
 use serde::{Deserialize,Serialize};
 use crate::simulation::Vars;
-use gpgpu::algorithms::{moments_to_cumulants,AlgorithmParam::*,MomentsParam};
+use gpgpu::algorithms::{moments_to_cumulants,AlgorithmParam::*,MomentsParam,ReduceParam,Window};
 use std::io::Write;
 use gpgpu::{Dim::*,DimDir::*};
 use gpgpu::descriptors::KernelArg::*;
@@ -13,6 +13,7 @@ pub enum Action {
     DynamicStructureFactor(Vec<String>),
     Correlation(Vec<String>),
     RawData(Vec<String>),
+    Window(Vec<String>,Vec<f64>), // buffers, fm apperture
 }
 pub use Action::*;
 
@@ -49,7 +50,7 @@ fn moms(w: u32, vars: &Vars, bufs: &[&'static str], h: &mut gpgpu::Handler, comp
     let mut dirs = vars.dim.all_dirs();
     dirs.retain(|v| !vars.dirs.contains(&v));
     let mul = if complex { 2 } else { 1 };
-    let prm = MomentsParam{ num: 2, vect_dim: w*mul, packed: false, window: None };
+    let prm = MomentsParam{ num: 2, vect_dim: w*mul, packed: false };
     h.run_algorithm("moments", dim.into(),&dirs, bufs, Ref(&prm))?;
     dirs.iter().for_each(|d| dim[*d as usize] = 1);
     let len = dim[0]*dim[1]*dim[2];
@@ -73,35 +74,79 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
     // To use vectorial data, the dim of the data must be known here
     pub fn to_callback(&self, name_to_index: &HashMap<String,usize>, num_pdes: usize) -> Callback {
         match self {
+            Window(names,appertures) => {
+                let appertures = appertures.clone();
+                let mut current = String::new();
+                gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+                    if head { current = String::new(); }
+                    let dim: [usize; 3] = vars.dim.into();
+                    let windows: Vec<(Vec<Window>,f64)> = appertures.iter().map(|app| (vars.dirs.iter().map(|d| {
+                        let dim = dim[*d as usize];
+                        let mut len = (app*dim as f64) as _;
+                        if len == 0 { len = 1 };
+                        Window{ offset: (dim-len)/2, len}
+                    }).collect(),*app)).collect();
+                    let w = vars.dvars[id].1;
+                    let num = 4;
+                    for (window,app) in windows {
+                        let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
+                        h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
+                        if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                            let mut dim: [usize;3] = vars.dim.into();
+                            vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                            let len = dim[0]*dim[1]*dim[2];
+                            let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
+                            h.run_algorithm("moments", D1(len), &[X], &["sum","sum","tmp","summoments"], Ref(&prm))?;
+                            let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
+                            let cumulants = moments_to_cumulants(&moments, w as _);
+                            let name = strip(&vars.dvars[id].0);
+                            write_all(&vars.parent, "window.yaml", &format!("{}  {}\n      moments: [{}]\n      cumulants: [{}]\n",
+                                    if head { format!("- t: {:e}\n", t) } else { "".into() },
+                                    if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
+                            moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
+                            cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                            ));
+                        } else {
+                            let win = h.get_firsts("sum",w as _)?.VF64();
+                            write_all(&vars.parent, "window.yaml", &format!("{}  {}:\n    win: [{}]\n",
+                                    if head { format!("- t: {:e}\n", t) } else { "".into() }, 
+                                    strip(&vars.dvars[id].0),
+                            win.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
+                            ));
+                        }
+                        current = strip(&vars.dvars[id].0);
+                        head = false;
+                    }
+                }}},
             Moments(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
-                let prm = MomentsParam{ num: 4, vect_dim: w, packed: true, window: None };
+                let num = 4;
+                let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
                 h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let mut dim: [usize;3] = vars.dim.into();
                     vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                     let len = dim[0]*dim[1]*dim[2];
-                    let prm = MomentsParam{ num: 2, vect_dim: w, packed: false, window: None };
-                    h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",4u32.into())])?;
-                    h.run_algorithm("moments", D2(4,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;
-                    h.run_arg("to_var",D1(4*w as usize),&[BufArg("sumdst","src")])?;
-                    let res = h.get_firsts("sumdst",4*2*w as usize)?.VF64();
-                    let overall_cumulants = moments_to_cumulants(&res[0..(4*w as usize)],w as _).iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",");
-                    let moms = res.chunks(4*w as usize)
+                    let prm = MomentsParam{ num: 2, vect_dim: w, packed: false };
+                    h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
+                    h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;
+                    h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
+                    let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
+                    let overall_cumulants = moments_to_cumulants(&res[0..(num*w as usize)],w as _).iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",");
+                    let moms = res.chunks(num*w as usize)
                         .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
                         .collect::<Vec<String>>();
-                    h.run_algorithm("moments", D2(4,len), &[Y], &["cumulants","cumulants","summoments","sumdst"], Ref(&prm))?;
-                    h.run_arg("to_var",D1(4*w as usize),&[BufArg("sumdst","src")])?;
-                    let res = h.get_firsts("sumdst",4*2*w as usize)?.VF64();
-                    let momsc = res.chunks(4*w as usize)
+                    h.run_algorithm("moments", D2(num,len), &[Y], &["cumulants","cumulants","summoments","sumdst"], Ref(&prm))?;
+                    h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
+                    let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
+                    let momsc = res.chunks(num*w as usize)
                         .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
                         .collect::<Vec<String>>();
                     write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    overall_cumulants: [{}]\n    cumulants: [{}]\n    sigma_cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
                     moms[0],moms[1],overall_cumulants,momsc[0],momsc[1]
                     ));
-                    //TODO non-overall cumulants;
                 } else {
-                    let moments = h.get_firsts("moments",4*w as usize)?.VF64();
+                    let moments = h.get_firsts("moments",num*w as usize)?.VF64();
                     let cumulants = moments_to_cumulants(&moments, w as _);
                     write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
                     moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
