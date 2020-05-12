@@ -170,6 +170,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     h = h.load_kernel("kc_times");
     h = h.load_kernel("kc_times_conj");
     h = h.load_kernel("ctimes");
+    h = h.load_kernel("moments_to_cumulants");
 
 
     let mut consts = HashMap::new();
@@ -287,6 +288,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     h = h.add_buffer("sum", Len(F64(0.0), len*max));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum*max));
     h = h.add_buffer("moments", Len(F64(0.0), momsum*max));
+    h = h.add_buffer("cumulants", Len(F64(0.0), momsum*max));
     h = h.add_buffer("summoments", Len(F64(0.0), momsum*max));
     h = h.add_buffer("srcFFT", Len(F64_2([0.0,0.0]), len*max));
     h = h.add_buffer("tmpFFT", Len(F64_2([0.0,0.0]), len*max));

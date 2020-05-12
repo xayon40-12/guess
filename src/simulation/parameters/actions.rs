@@ -82,6 +82,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                     let len = dim[0]*dim[1]*dim[2];
                     let prm = MomentsParam{ num: 2, vect_dim: w, packed: false };
+                    h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",4u32.into())])?;
                     h.run_algorithm("moments", D2(4,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;
                     h.run_arg("to_var",D1(4*w as usize),&[BufArg("sumdst","src")])?;
                     let res = h.get_firsts("sumdst",4*2*w as usize)?.VF64();
@@ -89,8 +90,14 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     let moms = res.chunks(4*w as usize)
                         .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
                         .collect::<Vec<String>>();
-                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    overall_cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms[0],moms[1],overall_cumulants
+                    h.run_algorithm("moments", D2(4,len), &[Y], &["cumulants","cumulants","summoments","sumdst"], Ref(&prm))?;
+                    h.run_arg("to_var",D1(4*w as usize),&[BufArg("sumdst","src")])?;
+                    let res = h.get_firsts("sumdst",4*2*w as usize)?.VF64();
+                    let momsc = res.chunks(4*w as usize)
+                        .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
+                        .collect::<Vec<String>>();
+                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    overall_cumulants: [{}]\n    cumulants: [{}]\n    sigma_cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                    moms[0],moms[1],overall_cumulants,momsc[0],momsc[1]
                     ));
                     //TODO non-overall cumulants;
                 } else {
