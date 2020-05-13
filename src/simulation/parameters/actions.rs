@@ -80,17 +80,22 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                     if head { current = String::new(); }
                     let dim: [usize; 3] = vars.dim.into();
-                    let windows: Vec<(Vec<Window>,f64)> = appertures.iter().map(|app| (vars.dirs.iter().map(|d| {
-                        let dim = dim[*d as usize];
-                        let mut len = (app*dim as f64) as _;
-                        if len == 0 { len = 1 };
-                        Window{ offset: (dim-len)/2, len}
-                    }).collect(),*app)).collect();
+                    let windows: Vec<(Vec<Window>,usize,f64)> = appertures.iter().map(|app| {
+                        let wins: Vec<Window> = vars.dirs.iter().map(|d| {
+                            let dim = dim[*d as usize];
+                            let mut len = (app*dim as f64) as _;
+                            if len == 0 { len = 1 };
+                            Window{ offset: (dim-len)/2, len}
+                        }).collect();
+                        let tot = wins.iter().fold(1, |a,w| a*w.len );
+                        (wins,tot,*app)
+                    }).collect();
                     let w = vars.dvars[id].1;
                     let num = 4;
-                    for (window,app) in windows {
+                    for (window,tot,app) in windows {
                         let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
                         h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
+                        h.run_arg("ctimes",D1(w as usize),&[BufArg("sum","src"),BufArg("sum","dst"),Param("c",(1.0/tot as f64).into())])?;
                         if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                             let mut dim: [usize;3] = vars.dim.into();
                             vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
