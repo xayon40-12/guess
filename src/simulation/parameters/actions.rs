@@ -108,9 +108,10 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                             ));
                         } else {
                             let win = h.get_firsts("sum",w as _)?.VF64();
-                            write_all(&vars.parent, "window.yaml", &format!("{}  {}:\n    win: [{}]\n",
+                            let name = strip(&vars.dvars[id].0);
+                            write_all(&vars.parent, "window.yaml", &format!("{}  {}\n      win: [{}]\n",
                                     if head { format!("- t: {:e}\n", t) } else { "".into() }, 
-                                    strip(&vars.dvars[id].0),
+                                    if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
                             win.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
                             ));
                         }
