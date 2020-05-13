@@ -5,7 +5,7 @@ use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,Kerne
 use gpgpu::integrators::{create_euler_pde,SPDE,IntegratorParam};
 use gpgpu::kernels::SKernel;
 use gpgpu::functions::SFunction;
-use gpgpu::algorithms::AlgorithmParam::*;
+use gpgpu::algorithms::{AlgorithmParam::*,RandomType};
 
 #[cfg(debug_assertions)]
 use std::io::Write;
@@ -55,7 +55,7 @@ impl Simulation {
         let mut handler = Handler::builder()?;
         let parent = if let Some(i) = file_name.find('.') { &file_name[..i] } else { file_name }.to_string();
         if check {
-            extract_symbols(handler, param, parent, true)?;
+            extract_symbols(handler, param, parent, true, 0)?;
             return Ok(());
         }
 
@@ -68,10 +68,10 @@ impl Simulation {
             }
         }
 
-        let run = |parent: &String| {
+        let run = |parent: &String, id: u64| {
             let target = std::path::Path::new(&parent);
             std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
-            if let Some(mut sim) = extract_symbols(handler.clone(), param.clone(), parent.clone(), false)? {
+            if let Some(mut sim) = extract_symbols(handler.clone(), param.clone(), parent.clone(), false, id)? {
                 sim.run()?;
             }
             Ok(())
@@ -79,17 +79,17 @@ impl Simulation {
         match num {
             Single(n) => {
                 let parent = format!("{}{}", parent, n);
-                run(&parent)
+                run(&parent, n as _)
             },
             Multiple(n) => {
                 for i in 0..n {
                     let parent = format!("{}{}", parent, i);
-                    run(&parent)?;
+                    run(&parent, i as _)?;
                 }
                 Ok(())
             },
             NoNum => {
-                run(&parent)
+                run(&parent, 0)
             },
         }
     }
@@ -120,9 +120,9 @@ impl Simulation {
             if let Some(noises) = noises {
                 for noise in noises {
                     match noise {
-                        Uniform{name,dim} => self.handler.run_arg("unifnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
-                        Normal{name,dim} => self.handler.run_arg("normnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
-                    }
+                        Uniform{name,dim} => self.handler.run_algorithm("noise", noise_dim(dim), &[], &[name,&name[3..]],Ref(&RandomType::Uniform))?,
+                        Normal{name,dim} => self.handler.run_algorithm("noise", noise_dim(dim), &[], &[name,&name[3..]],Ref(&RandomType::Normal))?,
+                    };
                 }
             }
 
@@ -140,7 +140,7 @@ impl Simulation {
     }
 }
 
-fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, check: bool) -> gpgpu::Result<Option<Simulation>> {
+fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, check: bool, sim_id: u64) -> gpgpu::Result<Option<Simulation>> {
 
     let upparent = if parent.rfind('/').is_some() { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
 
@@ -164,8 +164,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     h = h.load_algorithm("sum");
     h = h.load_algorithm("correlation");
     h = h.load_algorithm("FFT");
-    h = h.load_kernel_named("philox4x32_10_unit","unifnoise");
-    h = h.load_kernel_named("philox4x32_10_normal","normnoise");
+    h = h.load_algorithm_named("philox4x32_10","noise");
     h = h.load_kernel("complex_from_real");
     h = h.load_kernel("kc_sqrmod");
     h = h.load_kernel("kc_times");
@@ -264,7 +263,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
                     if dim == 0 { panic!("dim of noise \"{}\" must be different of 0.",name) }
                     let l = len*dim;
                     if !check {
-                        h = h.add_buffer(&format!("src{}",name),Len(U64(time),l));
+                        h = h.add_buffer(&format!("src{}",name),Len(U64_2([time,sim_id]),l));
                         h = h.add_buffer(name,Len(F64(0.0),l));
                     }
                     time += 1;//TODO use U64_2 and another incrementer insted
@@ -309,9 +308,9 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
         if let Some(noises) = &param.noises {
             for noise in noises {
                 match noise {
-                    Uniform{name,dim} => handler.run_arg("unifnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
-                    Normal{name,dim} => handler.run_arg("normnoise", noise_dim(dim), &[BufArg(name,"src"),BufArg(&name[3..],"dst")])?,
-                }
+                    Uniform{name,dim} => handler.run_algorithm("noise", noise_dim(dim), &[], &[name,&name[3..]],Ref(&RandomType::Uniform))?,
+                    Normal{name,dim} => handler.run_algorithm("noise", noise_dim(dim), &[], &[name,&name[3..]],Ref(&RandomType::Normal))?,
+                };
             }
         }
         let mut args = dvars.iter().filter(|(n,_)| !n.starts_with("swap_")).map(|(n,_)| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
