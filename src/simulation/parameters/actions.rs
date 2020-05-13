@@ -95,11 +95,11 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     for (window,tot,app) in windows {
                         let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
                         h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
-                        h.run_arg("ctimes",D1(w as usize),&[BufArg("sum","src"),BufArg("sum","dst"),Param("c",(1.0/tot as f64).into())])?;
+                        let mut dim: [usize;3] = vars.dim.into();
+                        vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                        let len = dim[0]*dim[1]*dim[2];
+                        h.run_arg("ctimes",D1(len*w as usize),&[BufArg("sum","src"),BufArg("sum","dst"),Param("c",(1.0/tot as f64).into())])?;
                         if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                            let mut dim: [usize;3] = vars.dim.into();
-                            vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
-                            let len = dim[0]*dim[1]*dim[2];
                             let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
                             h.run_algorithm("moments", D1(len), &[X], &["sum","sum","tmp","summoments"], Ref(&prm))?;
                             let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
