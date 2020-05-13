@@ -11,11 +11,12 @@ actions:
   - [{Correlation: [u]}, {At: 10}]
 config:
   t_max: 10
-  dim: {D1: [16,20]} #{D3: [[256,20],[16,0],[16,0]]}
+  dim: {D2: [[16,20],[1000,0]]} #{D3: [[256,20],[16,0],[16,0]]}
   dirs: [X]
 noises:
   - Normal:
       name: xi
+      dim: 2
 symbols: |
   D := 1
   c(a) := 1

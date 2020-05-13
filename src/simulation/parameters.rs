@@ -40,6 +40,12 @@ impl Noises {
             Uniform{name,..} | Normal{name,..} => name.clone(),
         }
     }
+    pub fn dim(&self) -> Option<usize> {
+        use Noises::*;
+        match self {
+            Uniform{dim,..} | Normal{dim,..} => dim.clone(),
+        }
+    }
     pub fn set_name(&mut self, new_name: String) {
         use Noises::*;
         match self {

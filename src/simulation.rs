@@ -96,7 +96,7 @@ impl Simulation {
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
         let Vars {t_max, dim, dirs: _, len, ref dvars, ref noises, phy: _ , parent: _} = self.vars;
-        let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
+        let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 });
         let dvars = dvars.iter().map(|i| &i.0[..]).collect::<Vec<_>>();
 
         let mut intprm = IntegratorParam {
@@ -263,13 +263,14 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
                     if dim == 0 { panic!("dim of noise \"{}\" must be different of 0.",name) }
                     let l = len*dim;
                     if !check {
-                        h = h.add_buffer(&format!("src{}",name),Len(U64_2([time,sim_id]),l));
+                        h = h.add_buffer(&format!("src{}",name),Len(U64_2([time,sim_id]),l/2));
                         h = h.add_buffer(name,Len(F64(0.0),l));
                     }
                     time += 1;//TODO use U64_2 and another incrementer insted
                     dvars.push((name.clone(),dim));
                     name_to_index.insert(name.clone(),index);
                     index += 1;
+                    max = usize::max(max,dim);
                 },
             }
         }
@@ -304,7 +305,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
 
     let mut handler = h.build()?;
     if init_kernels.len()>0 {
-        let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 }/2);//WARNING must divide by 2 because random number are computed 2 at a time
+        let noise_dim = |dim: &Option<usize>| D1(len*if let Some(d) = dim { *d } else { 1 });
         if let Some(noises) = &param.noises {
             for noise in noises {
                 match noise {
