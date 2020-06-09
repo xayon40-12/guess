@@ -92,6 +92,8 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     }).collect();
                     let w = vars.dvars[id].1;
                     let num = 4;
+                    let mut moments_app = String::new();
+                    let mut cumulants_app = String::new();
                     for (window,tot,app) in windows {
                         let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
                         h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
@@ -104,13 +106,8 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                             h.run_algorithm("moments", D1(len), &[X], &["sum","sum","tmp","summoments"], Ref(&prm))?;
                             let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
                             let cumulants = moments_to_cumulants(&moments, w as _);
-                            let name = strip(&vars.dvars[id].0);
-                            write_all(&vars.parent, "window.yaml", &format!("{}  {}\n      moments: [{}]\n      cumulants: [{}]\n",
-                                    if head { format!("- t: {:e}\n", t) } else { "".into() },
-                                    if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
-                            moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
-                            cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
-                            ));
+                            moments_app = format!("{}      {}: [{}]\n", moments_app, app, moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","));
+                            cumulants_app = format!("{}      {}: [{}]\n", cumulants_app, app, cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","));
                         } else {
                             let win = h.get_firsts("sum",w as _)?.VF64();
                             let name = strip(&vars.dvars[id].0);
@@ -119,9 +116,18 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                                     if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
                             win.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
                             ));
+                            head = false;
+                            current = strip(&vars.dvars[id].0);
                         }
-                        current = strip(&vars.dvars[id].0);
-                        head = false;
+                    }
+                    if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                        let name = strip(&vars.dvars[id].0);
+                        write_all(&vars.parent, "window.yaml", &format!("{}  {}:\n    moments:\n{}    cumulants:\n{}",
+                                if head { format!("- t: {:e}\n", t) } else { "".into() },
+                                name,
+                                moments_app,
+                                cumulants_app
+                        ));
                     }
                 }}},
             Moments(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {

@@ -44,7 +44,8 @@ pub struct Simulation {
 
 impl Simulation {
     pub fn from_param<'a>(file_name: &'a str, num: NumType, check: bool) -> gpgpu::Result<()> {
-        let param: Param = serde_yaml::from_str(&std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name))).expect(&format!("Could not convert yaml in file \"{}\".", file_name));
+        let paramstr = std::fs::read_to_string(file_name).expect(&format!("Could not find parameter file \"{}\".", file_name));
+        let param: Param = serde_yaml::from_str(&paramstr).expect(&format!("Could not convert yaml in file \"{}\".", file_name));
         //let directory = std::path::Path::new(file_name);
         //if let Some(directory) = directory.parent() {
         //    if directory.exists() {
@@ -69,8 +70,11 @@ impl Simulation {
         }
 
         let run = |parent: &String, id: u64| {
-            let target = std::path::Path::new(&parent);
+            let targetstr = format!("{}/config",parent);
+            let target = std::path::Path::new(&targetstr);
             std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
+            let dst = format!("{}/config/param.yaml",parent);
+            std::fs::write(&dst, &paramstr).expect(&format!("Could not write parameter file to \"{}\"", dst));
             if let Some(mut sim) = extract_symbols(handler.clone(), param.clone(), parent.clone(), false, id)? {
                 sim.run()?;
             }
