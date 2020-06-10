@@ -19,8 +19,8 @@ impl Repetition {
                 Box::new(move |t| if !done && t >= at { done = true; true } else { false })
             },
             Every(every) => {
-                let mut next = f64::NEG_INFINITY;
-                Box::new(move |t| if t >= next { next = t + every; true } else { false })
+                let mut next = 0.0;
+                Box::new(move |t| if t >= next { next = t - (t-next)%every + every; true } else { false })
             },
             Interval{from,to,every} => {
                 let mut next = from;
