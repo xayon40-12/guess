@@ -19,17 +19,17 @@ impl Repetition {
                 Box::new(move |t| if !done && t >= at { done = true; true } else { false })
             },
             Every(every) => {
-                let mut pred = f64::NEG_INFINITY;
-                Box::new(move |t| if t >= pred + every { pred = t; true } else { false })
+                let mut next = f64::NEG_INFINITY;
+                Box::new(move |t| if t >= next { next = t + every; true } else { false })
             },
             Interval{from,to,every} => {
-                let mut pred = f64::NEG_INFINITY;
-                Box::new(move |t| if from<=t && t<=to && t >= pred+every { pred = t; true } else { false })
+                let mut next = from;
+                Box::new(move |t| if t<=to && t >= next { next = t - (t-next)%every + every; true } else { false })
             },
             TotalInterval{from,to,total} => {
                 let every = (to-from)/total;
-                let mut pred = f64::NEG_INFINITY;
-                Box::new(move |t| if from<=t && t<=to && t >= pred+every { pred = t; true } else { false })
+                let mut next = from;
+                Box::new(move |t| if t<=to && t >= next { next = t - (t-next)%every + every; true } else { false })
             },
         }
     }
