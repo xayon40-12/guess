@@ -186,7 +186,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     ));
                 }
             }},
-            DynamicStructureFactor(names) =>  { let mut first = true; let mut start = "\n-"; gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+            DynamicStructureFactor(names) =>  { let mut first = true; let mut start = "-"; gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let len = vars.len;
                 h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
