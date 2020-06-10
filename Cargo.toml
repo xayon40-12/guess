@@ -1,5 +1,5 @@
 [package]
-name = "ushf"
+name = "ushf_run"
 version = "0.1.0"
 authors = ["xayon40-12 <touroux.nathan@gmail.com>"]
 edition = "2018"

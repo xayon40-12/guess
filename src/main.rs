@@ -1,7 +1,7 @@
-use ushf::*;
+use ushf_run::*;
 use clap::{Arg, App, SubCommand};
 use regex::Regex;
-use crate::simulation::NumType::*;
+use simulation::NumType::*;
 
 fn main() -> gpgpu::Result<()> {
     let matches = App::new("ushf")
