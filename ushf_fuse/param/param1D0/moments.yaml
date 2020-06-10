@@ -1,0 +1,7 @@
+- t: 0e0
+  u:
+    moments: [3e0,2.5e0,0e0,0e0]
+    sigma_moments: [3e0,0e0,0e0,0e0]
+    overall_cumulants: [1e0,2e0,3e0,9e0]
+    cumulants: [0e0,0e0,0e0,0e0]
+    sigma_cumulants: [0e0,0e0,0e0,0e0]

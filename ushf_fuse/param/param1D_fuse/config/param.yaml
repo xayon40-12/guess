@@ -1,0 +1,20 @@
+actions:
+  - [{Moments: [u]}, {TotalInterval: {from: 0, to: 0, total: 20}}]
+  - [{Window: [[u],[0,0.3,0.63,0.8,0.9,1]]}, {TotalInterval: {from: 0, to: 2, total: 20}}]
+  - [{StaticStructureFactor: [u]}, {TotalInterval: {from: 0, to: 2, total: 20}}]
+  - [{DynamicStructureFactor: [u]}, {TotalInterval: {from: 1.5, to: 2, total: 20}}]
+  - [{Correlation: [u]}, {TotalInterval: {from: 0, to: 2, total: 20}}]
+config:
+  t_max: 20
+  dim: {D2: [[1024,1000],[10,0]]}
+  dirs: [X]
+noises:
+  - Normal:
+      name: xi
+symbols: |
+  D := 1
+  b(_x,_y,*u) := u[x%x_size+x_size*(y%y_size)]
+  u' := D*(b(x+1,y,u)-2*b(x,y,u)+b(x+x_size-1,y,u))*ivdx*ivdx + sqrt(2*D*ivdx*ivdt)*(b(x+1,y,xi)-b(x,y,xi))*ivdx
+integrator:
+  Euler:
+    dt: 0.001

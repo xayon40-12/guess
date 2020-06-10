@@ -1,6 +1,8 @@
 use regex::Regex;
+use std::io::prelude::*;
 use std::io::BufReader;
 use std::fs::File;
+use std::io::Write;
 
 fn folders(name: &str) -> Vec<String> {
     let re = Regex::new(&format!(r"^{}\d+$",name)).unwrap();
@@ -26,16 +28,99 @@ fn files(dir: &str) -> Vec<String> {
 struct Data {
     param: String,
     src_observable: Vec<Vec<BufReader<File>>>,
-    dst_observable: Vec<BufReader<File>>,
+    dst_observable: Vec<(String,File)>,
+    fuse_file: File,
 }
 
 impl Data {
-    pub fn new(param: String, src_observable: Vec<Vec<BufReader<File>>>, dst_observable: Vec<BufReader<File>>) -> Data {
-        Data{ param, src_observable, dst_observable }
+    pub fn new(param: String, src_observable: Vec<Vec<BufReader<File>>>, dst_observable: Vec<(String,File)>, fuse_file: File) -> Data {
+        Data{ param, src_observable, dst_observable, fuse_file }
     }
 
-    pub fn doit(self) {
+    pub fn doit(mut self) {
+        let fuse = self.dst_observable.iter().zip(self.src_observable.iter()).map(|((name,_),src)| format!("{}: {}", name, src.len())).collect::<Vec<_>>().join("\n");
+        write!(self.fuse_file, "{}", fuse).unwrap();
+        self.dst_observable.into_iter().zip(self.src_observable.into_iter()).for_each(|((dstname,mut dst),mut src)| {
+            let mut id = 0;
+            let mut last: Option<(String,Vec<f64>,Vec<f64>)> = None;
+            let mut line = String::new();
+            let num = src.len();
+            let mut is_sigma;
+            'top: loop {
+                id += 1;
+                let mut mean: Option<(Vec<f64>,Vec<f64>)> = None;
+                let mut start: Option<String> = None;
+                is_sigma = false;
+                for s in &mut src {
+                    line = String::new();
+                    s.read_line(&mut line).unwrap();
+                    if line.len() == 0 { break 'top; }
+                    let l = line.split(":").collect::<Vec<_>>();
+                    if let Some(start) = &start {
+                        if start != &l[0] { panic!("Lines {} does not correspond in observable \"{}\".", id, &dstname); }
+                    } else {
+                        start = Some(l[0].to_string());
+                        is_sigma = l[0][l[0].rfind(" ").unwrap()+1..].starts_with("sigma_");
+                    }
+                    if l[1].starts_with(" [") {
+                        let vec = l[1][2..l[1].rfind("]").unwrap()]
+                            .split(",")
+                            .map(|i| i.parse::<f64>().unwrap())
+                            .collect::<Vec<_>>();
+                        let sig = vec.iter().map(|i| i*i).collect::<Vec<_>>();
+                        if is_sigma {
+                            if let Some((mean,_)) = &mut mean {
+                                let m = last.clone().expect(&format!("There must be an observable befor its sigma_ line {} in \"{}\".", id, &dstname)).2;
+                                for i in 0..vec.len() {
+                                    mean[i] += sig[i]+m[i]*m[i];
+                                }
+                            } else {
+                                mean = Some((sig,vec![]));
+                            }
+                        } else {
+                            if let Some((mean,sigma)) = &mut mean {
+                                for i in 0..vec.len() {
+                                    mean[i] += vec[i];
+                                    sigma[i] += sig[i];
+                                }
+                            } else {
+                                mean = Some((vec,sig));
+                            }
+                        }
+                    }
+                }
+                let start = start.unwrap();
+                if is_sigma {
+                    if let Some((mut sig,_)) = mean {
+                        let m = last.unwrap().2;
+                        for i in 0..sig.len() { sig[i] = (sig[i]/num as f64-m[i]*m[i]).sqrt(); }
+                        write!(dst, "{}: {:?}\n", start, sig).unwrap();
+                    }
+                    last = None;
+                } else {
+                    if let Some(last) = &last {
+                        write!(dst, "{}: {:?}\n", last.0, last.1).unwrap();
+                    }
+                    if let Some((mut mean,mut sigma)) = mean {
+                        let pos = start.rfind(" ").unwrap();
+                        let sigstart = format!("{}sigma_{}", &start[0..pos+1], &start[pos+1..]);
+                        for i in 0..mean.len() { mean[i] /= num as f64; }
+                        for i in 0..sigma.len() { sigma[i] = (sigma[i]/num as f64-mean[i]*mean[i]).sqrt(); }
+                        write!(dst, "{}: {:?}\n", start, mean).unwrap();
+                        last = Some((sigstart, sigma, mean));
+                    } else {
+                        write!(dst, "{}", line).unwrap();
+                    }
+                }
 
+            }
+
+            if !is_sigma {
+                if let Some(last) = &last {
+                    write!(dst, "{}: {:?}\n", last.0, last.1).unwrap();
+                }
+            }
+        });
     }
 }
 
@@ -73,15 +158,25 @@ fn open_files(name: &str) -> Data {
     }).collect::<Vec<_>>();
     let param = param.expect("No param.yaml found.");
     let names = names.expect("No observable found.");
+    let mut itr = src_observable.into_iter();
+    let mut src_observable = itr.next().unwrap().into_iter().map(|i| vec![i]).collect::<Vec<_>>();
+    for it in itr {
+        it.into_iter().enumerate().for_each(|(i,v)| src_observable[i].push(v));
+    }
 
     let targetstr = format!("{}_fuse",name);
-    let target = std::path::Path::new(&targetstr);
+    let configstr = format!("{}/config",targetstr);
+    let target = std::path::Path::new(&configstr);
     std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
     let dst_observable = names.into_iter()
-        .map(|n| BufReader::new(File::create(&format!("{}/{}", &targetstr, n)).expect("Could not create destination file observable.")))
+        .map(|n| (n.clone(),File::create(&format!("{}/{}", &targetstr, n)).expect("Could not create destination file observable.")))
         .collect::<Vec<_>>();
 
-    Data::new(param, src_observable, dst_observable)
+    let fuse_file = File::create(&format!("{}/fuse.yaml", &configstr)).expect("Could not create destination file fuse.");
+    let mut param_file = File::create(&format!("{}/param.yaml", &configstr)).expect("Could not create destination file param.");
+    write!(param_file, "{}", param).unwrap();
+
+    Data::new(param, src_observable, dst_observable, fuse_file)
 }
 
 fn main() {
@@ -91,6 +186,6 @@ fn main() {
     } else {
         let name = &args[1];
         let data = open_files(name);
-        println!("{:#?}", data);
+        data.doit();
     }
 }
