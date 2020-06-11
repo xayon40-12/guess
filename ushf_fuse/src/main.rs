@@ -3,6 +3,7 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::fs::File;
 use std::io::Write;
+use rayon::prelude::*;
 
 fn folders(name: &str) -> Vec<String> {
     let re = Regex::new(&format!(r"^{}\d+$",name)).unwrap();
@@ -40,7 +41,7 @@ impl Data {
     pub fn doit(mut self) {
         let fuse = self.dst_observable.iter().zip(self.src_observable.iter()).map(|((name,_),src)| format!("{}: {}", name, src.len())).collect::<Vec<_>>().join("\n");
         write!(self.fuse_file, "{}", fuse).unwrap();
-        self.dst_observable.into_iter().zip(self.src_observable.into_iter()).for_each(|((dstname,mut dst),mut src)| {
+        self.dst_observable.into_par_iter().zip(self.src_observable.into_par_iter()).for_each(|((dstname,mut dst),mut src)| {
             let mut id = 0;
             let mut last: Option<(String,Vec<f64>,Vec<f64>)> = None;
             let mut line = String::new();
@@ -94,19 +95,20 @@ impl Data {
                     if let Some((mut sig,_)) = mean {
                         let m = last.unwrap().2;
                         for i in 0..sig.len() { sig[i] = (sig[i]/num as f64-m[i]*m[i]).sqrt(); }
-                        write!(dst, "{}: {:?}\n", start, sig).unwrap();
+                        write_array(&mut dst,&start,&sig);
                     }
                     last = None;
                 } else {
                     if let Some(last) = &last {
-                        write!(dst, "{}: {:?}\n", last.0, last.1).unwrap();
+                        write_array(&mut dst,&last.0,&last.1);
                     }
+                    last = None;
                     if let Some((mut mean,mut sigma)) = mean {
                         let pos = start.rfind(" ").unwrap();
                         let sigstart = format!("{}sigma_{}", &start[0..pos+1], &start[pos+1..]);
                         for i in 0..mean.len() { mean[i] /= num as f64; }
                         for i in 0..sigma.len() { sigma[i] = (sigma[i]/num as f64-mean[i]*mean[i]).sqrt(); }
-                        write!(dst, "{}: {:?}\n", start, mean).unwrap();
+                        write_array(&mut dst,&start,&mean);
                         last = Some((sigstart, sigma, mean));
                     } else {
                         write!(dst, "{}", line).unwrap();
@@ -117,11 +119,15 @@ impl Data {
 
             if !is_sigma {
                 if let Some(last) = &last {
-                    write!(dst, "{}: {:?}\n", last.0, last.1).unwrap();
+                    write_array(&mut dst,&last.0,&last.1);
                 }
             }
         });
     }
+}
+
+fn write_array(dst: &mut File, start: &str, arr: &Vec<f64>) {
+    write!(dst, "{}: [{}]\n", start, arr.iter().map(|i| format!("{:e}",i)).collect::<Vec<_>>().join(",")).unwrap();
 }
 
 fn open_files(name: &str) -> Data {
