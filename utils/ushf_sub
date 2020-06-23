@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 import sys
 import os
-from shutil import which
 
 
 args = [i for i in sys.argv if '-g' not in i]
 thisname=args.pop(0)
-thisname=which(thisname[thisname.rfind('/')+1:])
+thisname=os.popen("echo $(which %s)" % thisname[thisname.rfind('/')+1:]).read().strip()
 CGType = [i for i in sys.argv if '-g' in i]
 if len(CGType) > 0:
     CGType = CGType[0][2:]
@@ -17,12 +16,20 @@ def sub(name,num):
     suffix=""
     if num != None:
         name = "%s:=%d" % (name,num)
-    os.system("echo qsub -P P_nantheo -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN='%s' %s" % (CGType, name, thisname))
+    command = "qsub -P P_nantheo -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN='%s' %s" % (CGType, name, thisname)
+    print(command)
+    os.system(command)
 
 if len(args) > 0:
     for arg in args:
-        vals = arg.split(':')
-        name = "%s/%s" % (os.getcwd(),vals[0])
+        rs = arg.rfind('/')
+        if rs != -1:
+            left = arg[:rs+1]
+            vals = arg[rs+1:].split(':')
+        else:
+            left = ''
+            vals = arg.split(':')
+        name = "%s/%s%s" % (os.getcwd(),left,vals[0])
         if len(vals) > 1 and vals[1]:
             for i in range(int(vals[1])):
                 sub(name, i)
