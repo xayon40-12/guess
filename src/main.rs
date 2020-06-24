@@ -22,9 +22,9 @@ fn main() -> gpgpu::Result<()> {
                           .get_matches();
 
     let var = "USHF_RUN";
-    let rarg = Regex::new(r"([^:]*)(?::(=)?(.*))?").unwrap();
+    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(=?)(\d+))?").unwrap();
     let extract = |param: &str| {
-            let caps = rarg.captures(param).expect("Input args should be in the form \"file_name:number\" where \":number\" is optional.");
+            let caps = rarg.captures(param).expect("Input args should be in the form \"file_name:number\" where \":number\" is optional (\"file_name\" may contains \":\").");
             let param: String = caps[1].into();
             let num = if let Some(num) = caps.get(3).and_then(|n| Some(n.as_str())) {
                 let num = num.parse::<usize>()
