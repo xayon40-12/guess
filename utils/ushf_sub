@@ -5,8 +5,8 @@ import os
 
 args = [i for i in sys.argv if '-g' not in i]
 thisname=args.pop(0)
+runname=os.popen("echo $(which %s_run)" % thisname[thisname.rfind('/')+1:thisname.rfind('_')]).read().strip()
 thisname=os.popen("echo $(which %s)" % thisname[thisname.rfind('/')+1:]).read().strip()
-thisrun=os.popen("echo $(which %s_run)" % thisname[thisname.rfind('/')+1:thisname.find("_")]).read().strip()
 CGType = [i for i in sys.argv if '-g' in i]
 if len(CGType) > 0:
     CGType = CGType[0][2:]
@@ -17,7 +17,7 @@ def sub(name,num):
     suffix=""
     if num != None:
         name = "%s:=%d" % (name,num)
-    command = "qsub -P P_nantheo -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN='%s' %s" % (CGType, name, thisname)
+    command = "qsub -P P_nantheo -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN='%s' -v EXEC_RUN='%s' %s" % (CGType, name, runname, thisname)
     print(command)
     os.system(command)
 
@@ -37,4 +37,4 @@ if len(args) > 0:
         else:
             sub(name, None)
 else:
-    os.system(thisrun)
+    os.system('bash -l -c "$EXEC_RUN"')
