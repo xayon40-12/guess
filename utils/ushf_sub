@@ -5,8 +5,8 @@ import os
 
 args = [i for i in sys.argv if '-g' not in i]
 thisname=args.pop(0)
-runname=os.popen("echo $(which %s_run)" % thisname[thisname.rfind('/')+1:thisname.rfind('_')]).read().strip()
-thisname=os.popen("echo $(which %s)" % thisname[thisname.rfind('/')+1:]).read().strip()
+runname=os.popen("echo $(which %s_run 2> /dev/null)" % thisname[thisname.rfind('/')+1:thisname.rfind('_')]).read().strip()
+thisname=os.popen("echo $(which %s 2> /dev/null)" % thisname[thisname.rfind('/')+1:]).read().strip()
 CGType = [i for i in sys.argv if '-g' in i]
 if len(CGType) > 0:
     CGType = CGType[0][2:]
