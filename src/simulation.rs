@@ -54,17 +54,19 @@ impl Simulation {
         //}
 
         let mut handler = Handler::builder()?;
-        let parent = if let Some(i) = file_name.find('.') { &file_name[..i] } else { file_name }.to_string();
+        //WARNING if there is no file extension but there is a "." in the path name, the behaviour
+        //is wrong
+        let parent = if let Some(i) = file_name.rfind('.') { &file_name[..i] } else { file_name }.to_string();
         if check {
             extract_symbols(handler, param, parent, true, 0)?;
             return Ok(());
         }
 
-        let upparent = if parent.rfind('/').is_some() { format!("{}/",if let Some(i) = parent.rfind('/') { &parent[..i] } else { &parent }) } else { "".to_string() };
+        let upparent = if let Some(i) = parent.rfind('/') { &parent[..i+1] } else { "" }.to_string();
         if let Some(data_files) = &param.data_files {
             for f in data_files {
-                let name = if let Some(i) = f.find('.') { &f[..i] } else { f };
-                let name = if let Some(i) = name.rfind('/') { &name[i+1..] } else { name };
+                let name = if let Some(i) = f.rfind('/') { &f[i+1..] } else { f };
+                let name = if let Some(i) = name.find('.') { &name[..i] } else { name };
                 handler = handler.load_data(name,Format::Column(&std::fs::read_to_string(&format!("{}{}",&upparent,f)).expect(&format!("Could not find data file \"{}\".", f))),false,None); //TODO autodetect format from file extension
             }
         }
