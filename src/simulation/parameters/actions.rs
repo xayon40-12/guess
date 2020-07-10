@@ -144,18 +144,12 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;
                     h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
                     let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
-                    let overall_cumulants = moments_to_cumulants(&res[0..(num*w as usize)],w as _).iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",");
+                    let cumulants = moments_to_cumulants(&res[0..(num*w as usize)],w as _).iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",");
                     let moms = res.chunks(num*w as usize)
                         .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
                         .collect::<Vec<String>>();
-                    h.run_algorithm("moments", D2(num,len), &[Y], &["cumulants","cumulants","summoments","sumdst"], Ref(&prm))?;
-                    h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
-                    let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
-                    let momsc = res.chunks(num*w as usize)
-                        .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
-                        .collect::<Vec<String>>();
-                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    overall_cumulants: [{}]\n    cumulants: [{}]\n    sigma_cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms[0],moms[1],overall_cumulants,momsc[0],momsc[1]
+                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    cumulants: [{}]",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                    moms[0],moms[1],cumulants
                     ));
                 } else {
                     let moments = h.get_firsts("moments",num*w as usize)?.VF64();
