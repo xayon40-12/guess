@@ -176,6 +176,8 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     h = h.load_kernel("kc_times");
     h = h.load_kernel("kc_times_conj");
     h = h.load_kernel("ctimes");
+    h = h.load_kernel("cminus");
+    h = h.load_kernel("vcminus");
     h = h.load_kernel("moments_to_cumulants");
 
 

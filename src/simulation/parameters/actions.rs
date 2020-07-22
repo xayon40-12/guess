@@ -13,7 +13,7 @@ pub enum Action {
     DynamicStructureFactor(Vec<String>),
     Correlation(Vec<String>),
     RawData(Vec<String>),
-    Window(Vec<String>,Vec<f64>), // buffers, fm apperture
+    Window(Vec<String>), // buffers
 }
 pub use Action::*;
 
@@ -74,33 +74,33 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
     // To use vectorial data, the dim of the data must be known here
     pub fn to_callback(&self, name_to_index: &HashMap<String,usize>, num_pdes: usize) -> Callback {
         match self {
-            Window(names,appertures) => {
-                let appertures = appertures.clone();
+            Window(names) => {
                 let mut current = String::new();
                 gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                     if head { current = String::new(); }
                     let dim: [usize; 3] = vars.dim.into();
-                    let windows: Vec<(Vec<Window>,usize,f64)> = appertures.iter().map(|app| {
+                    let mdim = dim.iter().fold(dim[0], |a,i| if *i < a { *i } else { a });
+                    let windows: Vec<(Vec<Window>,usize)> = (0..(mdim-1)/2).map(|len| {
+                        let len = len + 1;
                         let wins: Vec<Window> = vars.dirs.iter().map(|d| {
                             let dim = dim[*d as usize];
-                            let mut len = (app*dim as f64) as _;
-                            if len == 0 { len = 1 };
                             Window{ offset: (dim-len)/2, len}
                         }).collect();
-                        let tot = wins.iter().fold(1, |a,w| a*w.len );
-                        (wins,tot,*app)
+                        (wins,(len-1)*2+1)
                     }).collect();
                     let w = vars.dvars[id].1;
                     let num = 4;
                     let mut moments_app = String::new();
                     let mut cumulants_app = String::new();
-                    for (window,tot,app) in windows {
+                    for (window,app) in windows {
                         let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
                         h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
                         let mut dim: [usize;3] = vars.dim.into();
                         vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                         let len = dim[0]*dim[1]*dim[2];
-                        h.run_arg("ctimes",D1(len*w as usize),&[BufArg("sum","src"),BufArg("sum","dst"),Param("c",(1.0/tot as f64).into())])?;
+                        // remove the line under to have the integrated window and not the mean
+                        // window
+                        //h.run_arg("ctimes",D1(len*w as usize),&[BufArg("sum","src"),BufArg("sum","dst"),Param("c",(1.0/tot as f64).into())])?;
                         if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                             let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
                             h.run_algorithm("moments", D1(len), &[X], &["sum","sum","tmp","summoments"], Ref(&prm))?;
@@ -148,7 +148,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     let moms = res.chunks(num*w as usize)
                         .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
                         .collect::<Vec<String>>();
-                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    cumulants: [{}]",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
                     moms[0],moms[1],cumulants
                     ));
                 } else {
@@ -208,6 +208,12 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
             Correlation(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let len = vars.len;
+                let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
+                let dim: [usize; 3] = vars.dim.into();
+                let mut dim: Vec<u32> = dim.iter().map(|&x| x as u32).collect();
+                vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
+                h.run_arg("vcminus", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("moments","c"),BufArg(&vars.dvars[id].0,"dst"),Param("size",[dim[0],dim[1],dim[2],w].into()),Param("vect_dim",w.into())])?;
                 h.run_algorithm("correlation",vars.dim,&vars.dirs,&[&vars.dvars[id].0,"tmp"],Ref(&w))?;
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
