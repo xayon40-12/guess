@@ -79,14 +79,15 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                     if head { current = String::new(); }
                     let dim: [usize; 3] = vars.dim.into();
-                    let mdim = dim.iter().fold(dim[0], |a,i| if *i < a { *i } else { a });
-                    let windows: Vec<(Vec<Window>,usize)> = (0..(mdim-1)/2).map(|len| {
+                    let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
+                    eprintln!("mdim: {}", mdim);
+                    let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
                         let len = len + 1;
                         let wins: Vec<Window> = vars.dirs.iter().map(|d| {
-                            let dim = dim[*d as usize];
-                            Window{ offset: (dim-len)/2, len}
+                            //let dim = dim[*d as usize];
+                            Window{ offset: 0, len}
                         }).collect();
-                        (wins,(len-1)*2+1)
+                        (wins,len)
                     }).collect();
                     let w = vars.dvars[id].1;
                     let num = 4;
