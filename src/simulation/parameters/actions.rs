@@ -17,7 +17,7 @@ pub enum Action {
 }
 pub use Action::*;
 
-pub type Callback = Box<dyn FnMut(&mut gpgpu::Handler,&Vars,usize,f64) -> gpgpu::Result<()>>;
+pub type Callback = Box<dyn FnMut(&mut gpgpu::Handler,&Vars,f64) -> gpgpu::Result<()>>;
 
 fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
     let write = |f,c: &str| std::fs::OpenOptions::new().create(true).append(true).open(&format!("{}/{}",parent,f))?.write_all(c.as_bytes());
@@ -29,9 +29,9 @@ fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
 macro_rules! gen {
     ($names:ident, $id:ident, $head:ident, $name_to_index:ident, $num_pdes:ident, $h:ident, $vars:ident, $t:ident, $body:tt) => {{
         let idx = $names.iter().map(|n| $name_to_index[n]).collect::<Vec<_>>();
-        Box::new(move |$h,$vars,swap,$t| {
+        Box::new(move |$h,$vars,$t| {
             let mut $head = true;
-            for $id in idx.iter().map(|&i| if i<2*$num_pdes { i+swap } else { i }) {
+            for $id in idx.iter().map(|&i| i) {
                 $body
                 $head = false;
             }
@@ -72,7 +72,7 @@ fn moms(w: u32, vars: &Vars, bufs: &[&'static str], h: &mut gpgpu::Handler, comp
 
 impl Action { //WARNING these actions only work on scalar data yet (vectorial not supported)
     // To use vectorial data, the dim of the data must be known here
-    pub fn to_callback(&self, name_to_index: &HashMap<String,usize>, num_pdes: usize) -> Callback {
+    pub fn to_callback(&self, name_to_index: &HashMap<String,usize>, _num_pdes: usize) -> Callback {
         match self {
             Window(names) => {
                 let mut current = String::new();

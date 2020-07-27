@@ -2,7 +2,7 @@ use gpgpu::{Handler,handler::HandlerBuilder};
 use gpgpu::data_file::Format;
 use gpgpu::{Dim::{self,*},DimDir};
 use gpgpu::descriptors::{Types::*,ConstructorTypes::*,BufferConstructor::*,KernelArg::*,SFunctionConstructor::*,KernelConstructor::*,SKernelConstructor};
-use gpgpu::integrators::{create_euler_pde,SPDE,IntegratorParam};
+use gpgpu::integrators::{create_euler_pde,create_projector_corrector_pde,create_rk4_pde,SPDE,IntegratorParam};
 use gpgpu::kernels::SKernel;
 use gpgpu::functions::SFunction;
 use gpgpu::algorithms::{AlgorithmParam::*,RandomType};
@@ -107,12 +107,12 @@ impl Simulation {
 
         let mut intprm = IntegratorParam {
             t: 0.0,
-            swap: 0,
-            args: vec![("t".to_string(),F64(0.0))],
+            increment_name: "t".to_string(),
+            args: vec![],
         };
         for (activator,callback) in &mut self.callbacks {
             if activator(intprm.t) {
-                callback(&mut self.handler, &self.vars, intprm.swap, intprm.t)?;
+                callback(&mut self.handler, &self.vars, intprm.t)?;
             }
         }
         #[cfg(debug_assertions)]
@@ -133,11 +133,10 @@ impl Simulation {
             }
 
             self.handler.run_algorithm("integrator",dim,&[],&dvars,Mut(&mut intprm))?;
-            intprm.args[0].1 = F64(intprm.t);
 
             for (activator,callback) in &mut self.callbacks {
                 if activator(intprm.t) {
-                    callback(&mut self.handler, &self.vars, intprm.swap, intprm.t)?;
+                    callback(&mut self.handler, &self.vars, intprm.t)?;
                 }
             }
         }
@@ -187,9 +186,26 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
         consts.insert(["ivdx","ivdy","ivdz"][i].to_string(),format!("{:e}",dims[i] as f64/phy[i]));
     }
 
-    if let Integrator::Euler{dt} = &param.integrator {
+    let nb_stages;
+    {
+        let dt = match &param.integrator {
+            Integrator::Euler{dt} => {
+                nb_stages = 1;
+                dt
+            },
+            Integrator::ProjectoCorrector{dt} => {
+                nb_stages = 2;
+                dt
+            },
+            Integrator::RK4{dt} => {
+                nb_stages = 4;
+                dt
+            },
+        };
+
         consts.insert("dt".to_string(),format!("{:e}",dt));
         consts.insert("ivdt".to_string(),format!("{:e}",1.0/dt));
+
     }
 
     let (func,pdes,init) = parse_symbols(param.symbols, consts);
@@ -211,7 +227,8 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     let mut dvars = pdes.iter().map(|i| (i.dvar.clone(),i.expr.len())).collect::<Vec<_>>();
     match &param.integrator {
         Integrator::Euler{dt} => h = h.create_algorithm(create_euler_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
-        Integrator::QSS => panic!("QSS not handled yet."),
+        Integrator::ProjectoCorrector{dt} => h = h.create_algorithm(create_projector_corrector_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
+        Integrator::RK4{dt} => h = h.create_algorithm(create_rk4_pde("integrator",*dt,pdes,Some(noises_names.clone()),vec![("t".into(),CF64)])),
     }
 
     let mut init_kernels = vec![];
@@ -244,7 +261,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     dvars.iter_mut().for_each(|i| {
         max = usize::max(max,i.1);
         name_to_index.insert(i.0.clone(),index);
-        index += 2;
+        index += 1+nb_stages;
         i.0 = format!("dvar_{}",i.0); 
     });
     for dvar in &dvars {
@@ -257,11 +274,25 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
             }).unwrap_or(Len(F64(0.0),len*dvar.1));
         if !check {
             h = h.add_buffer(&dvar.0,data);
-            h = h.add_buffer(&format!("swap_{}",&dvar.0),Len(F64(0.0),len*dvar.1));
+            for i in 0..nb_stages {
+                h = h.add_buffer(&format!("tmp_{}_k{}",&dvar.0,(i+1)),Len(F64(0.0),len*dvar.1));
+            }
+            if nb_stages>1 {
+                h = h.add_buffer(&format!("tmp_{}_tmp",&dvar.0),Len(F64(0.0),len*dvar.1));
+            }
         }
     }
     if init_file.len() > 0 { eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys()) }
-    let mut dvars = dvars.into_iter().flat_map(|i| vec![i.clone(),(format!("swap_{}",&i.0),i.1)].into_iter()).collect::<Vec<_>>();
+    let mut dvars = dvars.into_iter().flat_map(|i| {
+        let mut vars = vec![i.clone()];
+        for j in 0..nb_stages {
+            vars.push((format!("tmp_{}_k{}",&i.0,(j+1)),i.1));
+        }
+        if nb_stages>1 {
+            vars.push((format!("tmp_{}_tmp",&i.0),i.1));
+        }
+        vars.into_iter()
+    }).collect::<Vec<_>>();
 
     if let Some(noises) = &param.noises {
         for noise in noises {
@@ -322,9 +353,9 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
                 };
             }
         }
-        let mut args = dvars.iter().filter(|(n,_)| !n.starts_with("swap_")).map(|(n,_)| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
+        let mut args = dvars.iter().filter(|(n,_)| !n.starts_with("tmp_")).map(|(n,_)| BufArg(n,if n.starts_with("dvar_") { &n[5..] } else { n })).collect::<Vec<_>>();
         args.insert(0, BufArg("",""));
-        let init_kernels = init_kernels.iter().map(|n| (n.clone(), n.replace("init_","swap_dvar_").to_string())).collect::<Vec<_>>();
+        let init_kernels = init_kernels.iter().map(|n| (n.clone(), format!("{}_k1",n.replace("init_","tmp_dvar_")))).collect::<Vec<_>>();
         for (name,swap_name) in &init_kernels {
             args[0] = BufArg(swap_name,"dst");
             handler.run_arg(name, dim, &args)?;
@@ -417,7 +448,7 @@ fn parse_symbols(symbols: String, mut consts: HashMap<String,String>) -> (Vec<SF
         if let Some(caps) = search_const.captures(l) {
             let name = caps[1].into();
             let src = if &caps[2] == ":" {
-                caps[3].into()
+                replace(&caps[3],&consts)
             } else {
                 panic!("Interpeter not supported yet.")
             };
