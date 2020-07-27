@@ -78,6 +78,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 let mut current = String::new();
                 gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
                     if head { current = String::new(); }
+                    let w = vars.dvars[id].1;
                     let dim: [usize; 3] = vars.dim.into();
                     let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
                     let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
@@ -87,7 +88,6 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                         }).collect();
                         (wins,len)
                     }).collect();
-                    let w = vars.dvars[id].1;
                     let num = 4;
                     let mut moments_app = String::new();
                     let mut cumulants_app = String::new();
@@ -209,8 +209,8 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                 let mut dim: Vec<u32> = dim.iter().map(|&x| x as u32).collect();
                 vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                 h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
-                h.run_arg("vcminus", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("moments","c"),BufArg(&vars.dvars[id].0,"dst"),Param("size",[dim[0],dim[1],dim[2],w].into()),Param("vect_dim",w.into())])?;
-                h.run_algorithm("correlation",vars.dim,&vars.dirs,&[&vars.dvars[id].0,"tmp"],Ref(&w))?;
+                h.run_arg("vcminus", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("moments","c"),BufArg("sum","dst"),Param("size",[dim[0],dim[1],dim[2],w].into()),Param("vect_dim",w.into())])?;
+                h.run_algorithm("correlation",vars.dim,&vars.dirs,&["sum","tmp"],Ref(&w))?;
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
                     write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    correlation: [{}]\n    sigma_correlation: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
