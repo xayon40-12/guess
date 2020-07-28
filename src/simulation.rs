@@ -325,6 +325,7 @@ fn extract_symbols(mut h: HandlerBuilder, mut param: Param, parent: String, chec
     }
 
     h = h.add_buffer("tmp", Len(F64(0.0), len*max));
+    h = h.add_buffer("tmp2", Len(F64(0.0), len*max));
     h = h.add_buffer("sum", Len(F64(0.0), len*max));
     h = h.add_buffer("sumdst", Len(F64(0.0), lensum*max));
     h = h.add_buffer("moments", Len(F64(0.0), momsum*max));

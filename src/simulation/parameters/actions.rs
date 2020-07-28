@@ -45,6 +45,7 @@ fn strip<'a>(s: &'a str) -> String {
     s.replace("dvar_","").replace("swap_","").into()
 }
 
+// This function might be used with same first and second buffer as it compute only order 1 and 2
 fn moms(w: u32, vars: &Vars, bufs: &[&'static str], h: &mut gpgpu::Handler, complex: bool) -> gpgpu::Result<Vec<String>> {
     let mut dim: [usize;3] = vars.dim.into();
     let mut dirs = vars.dim.all_dirs();
@@ -99,7 +100,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                         let len = dim.iter().fold(1, |a,i| if *i > 0 { a*i } else { a });
                         if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                             let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
-                            h.run_algorithm("moments", D1(len), &[X], &["sum","sum","tmp","summoments"], Ref(&prm))?;
+                            h.run_algorithm("moments", D1(len), &[X], &["sum","tmp2","tmp","summoments"], Ref(&prm))?;
                             let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
                             let cumulants = moments_to_cumulants(&moments, w as _);
                             moments_app = format!("{}      {}: [{}]\n", moments_app, app, moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","));
@@ -137,7 +138,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     let len = dim[0]*dim[1]*dim[2];
                     let prm = MomentsParam{ num: 2, vect_dim: w, packed: false };
                     h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
-                    h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;
+                    h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;// WARNING use "moments" twice because num=2, if num>2 a tmp buffer is needed
                     h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
                     let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
                     let cumulants = moments_to_cumulants(&res[0..(num*w as usize)],w as _).iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",");
