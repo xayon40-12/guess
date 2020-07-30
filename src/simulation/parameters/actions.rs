@@ -81,6 +81,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     if head { current = String::new(); }
                     let w = vars.dvars[id].1;
                     let dim: [usize; 3] = vars.dim.into();
+                    let dxs = dim.iter().zip(vars.phy.iter()).fold(1.0, |a,i| if *i.1 > 0.0 { a*i.1/(*i.0) as f64 } else { a });
                     let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
                     let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
                         let len = len + 1;
@@ -97,7 +98,8 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                         h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
                         let mut dim: [usize;3] = vars.dim.into();
                         vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
-                        let len = dim.iter().fold(1, |a,i| if *i > 0 { a*i } else { a });
+                        let len = dim.iter().fold(1, |a,i| a*i);
+                        h.run_arg("ctimes", D1(len*w as usize), &[BufArg("sum","src"),Param("c",dxs.into()),BufArg("sum","dst")])?;
                         if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                             let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
                             h.run_algorithm("moments", D1(len), &[X], &["sum","tmp2","tmp","summoments"], Ref(&prm))?;
