@@ -71,7 +71,7 @@ impl Simulation {
             }
         }
 
-        let run = |parent: &String, id: u64| {
+        let run = |parent: &String, id: u64| -> gpgpu::Result<()>{
             let targetstr = format!("{}/config",parent);
             let target = std::path::Path::new(&targetstr);
             std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
@@ -85,19 +85,23 @@ impl Simulation {
         match num {
             Single(n) => {
                 let parent = format!("{}{}", parent, n);
-                run(&parent, n as _)
+                run(&parent, n as _)?;
             },
             Multiple(n) => {
                 for i in 0..n {
                     let parent = format!("{}{}", parent, i);
                     run(&parent, i as _)?;
                 }
-                Ok(())
             },
             NoNum => {
-                run(&parent, 0)
+                run(&parent, 0)?;
             },
         }
+        
+        let mut done = std::fs::File::create("")?;
+        done.write_all(b"done")?;
+        
+        Ok(())
     }
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
