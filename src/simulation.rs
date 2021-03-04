@@ -44,6 +44,7 @@ pub struct Vars {
     pub dirs: Vec<DimDir>,
     pub len: usize,
     pub dvars: Vec<(String, u32)>,
+    pub integrators: Vec<(String, Vec<String>)>,
     pub noises: Option<Vec<Noises>>,
     pub parent: String,
 }
@@ -58,10 +59,22 @@ impl Simulation {
     pub fn from_param<'a>(file_name: &'a str, num: NumType, check: bool) -> gpgpu::Result<()> {
         let paramstr = std::fs::read_to_string(file_name)
             .expect(&format!("Could not find parameter file \"{}\".", file_name));
-        let param: Param = serde_yaml::from_str(&paramstr).expect(&format!(
-            "Could not convert yaml in file \"{}\".",
-            file_name
-        ));
+        let param: Param = match file_name
+            .rfind('.')
+            .and_then(|p| Some(&file_name[p + 1..]))
+            .unwrap_or("")
+        {
+            "yaml" => serde_yaml::from_str(&paramstr).expect(&format!(
+                "Could not convert yaml in file \"{}\".",
+                file_name
+            )),
+            "ron" => ron::de::from_str(&paramstr)
+                .expect(&format!("Could not convert ron in file \"{}\".", file_name)),
+            a @ _ => panic!(
+                "Unrecognised extension \"{}\" for parameter file \"{}\".",
+                a, file_name
+            ),
+        };
         //let directory = std::path::Path::new(file_name);
         //if let Some(directory) = directory.parent() {
         //    if directory.exists() {
@@ -156,13 +169,13 @@ impl Simulation {
             dim,
             dirs: _,
             len,
-            ref dvars,
+            dvars: _,
+            ref integrators,
             ref noises,
             phy: _,
             parent: _,
         } = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
-        let dvars = dvars.iter().map(|i| &i.0[..]).collect::<Vec<_>>();
 
         let mut intprm = IntegratorParam {
             t: 0.0,
@@ -204,8 +217,12 @@ impl Simulation {
                 }
             }
 
-            self.handler
-                .run_algorithm("integrator", dim, &[], &dvars, Mut(&mut intprm))?;
+            //TODO run all integrator_i for each usb-process with the conresponding dvars
+            for (integrator, vars) in integrators {
+                let vars = vars.iter().map(|i| &i[..]).collect::<Vec<_>>();
+                self.handler
+                    .run_algorithm(integrator, dim, &[], &vars, Mut(&mut intprm))?;
+            }
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
@@ -320,45 +337,84 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
-    let (func, pdes, init) = parse_symbols(param.symbols, consts, dpdes, dirs.len());
+    let (func, pdess, init) = parse_symbols(param.symbols, consts, dpdes, dirs.len());
     for f in func {
         h = h.create_function(f);
     }
 
-    if pdes.len() == 0 {
-        panic!("PDEs must be given.")
-    };
-    let mut dvars = pdes
-        .iter()
-        .map(|i| (i.dvar.clone(), i.expr.len()))
-        .collect::<Vec<_>>();
-    match &param.integrator {
-        Integrator::Euler { dt } => {
-            h = h.create_algorithm(create_euler_pde(
-                "integrator",
-                *dt,
-                pdes,
-                Some(noises_names.clone()),
-                vec![("t".into(), CF64)],
-            ))
+    let mut dvars_names: HashSet<String> = HashSet::new();
+    let mut dvars = vec![];
+    let mut integrators = vec![];
+
+    for pdes in &pdess {
+        for i in pdes {
+            if dvars_names.insert(i.dvar.clone()) {
+                dvars.push((i.dvar.clone(), i.expr.len()));
+            }
         }
-        Integrator::ProjectoCorrector { dt } => {
-            h = h.create_algorithm(create_projector_corrector_pde(
-                "integrator",
-                *dt,
-                pdes,
-                Some(noises_names.clone()),
-                vec![("t".into(), CF64)],
-            ))
-        }
-        Integrator::RK4 { dt } => {
-            h = h.create_algorithm(create_rk4_pde(
-                "integrator",
-                *dt,
-                pdes,
-                Some(noises_names.clone()),
-                vec![("t".into(), CF64)],
-            ))
+    }
+    for (i, pdes) in pdess.into_iter().enumerate() {
+        if pdes.len() > 0 {
+            let integrator = &format!("integrator_{}", i);
+            let mut others = dvars
+                .iter()
+                .filter(|i| pdes.iter().filter(|j| j.dvar == i.0).count() == 0)
+                .map(|i| i.0.clone())
+                .collect::<Vec<_>>();
+            let mut int_other_pdes = others
+                .iter()
+                .map(|i| format!("dvar_{}", i))
+                .collect::<Vec<_>>();
+            int_other_pdes.append(&mut noises_names.clone());
+            others.append(&mut noises_names.clone());
+            let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
+            let nb_stages = match &param.integrator {
+                Integrator::Euler { dt } => {
+                    h = h.create_algorithm(create_euler_pde(
+                        integrator,
+                        *dt,
+                        pdes,
+                        Some(others),
+                        vec![("t".into(), CF64)],
+                    ));
+                    1
+                }
+                Integrator::ProjectoCorrector { dt } => {
+                    h = h.create_algorithm(create_projector_corrector_pde(
+                        integrator,
+                        *dt,
+                        pdes,
+                        Some(others),
+                        vec![("t".into(), CF64)],
+                    ));
+                    2
+                }
+                Integrator::RK4 { dt } => {
+                    h = h.create_algorithm(create_rk4_pde(
+                        integrator,
+                        *dt,
+                        pdes,
+                        Some(others),
+                        vec![("t".into(), CF64)],
+                    ));
+                    4
+                }
+            };
+            let mut buffers = pde_buffers
+                .iter()
+                .flat_map(|name| {
+                    let mut pde = vec![format!("dvar_{}", name)];
+                    for j in 0..nb_stages {
+                        pde.push(format!("tmp_dvar_{}_k{}", name, (j + 1)));
+                    }
+                    if nb_stages > 1 {
+                        pde.push(format!("tmp_dvar_{}_tmp", name));
+                    }
+                    pde
+                })
+                .collect::<Vec<_>>();
+            buffers.append(&mut int_other_pdes);
+            integrators.push((integrator.to_string(), buffers));
         }
     }
 
@@ -403,7 +459,7 @@ fn extract_symbols(
     dvars.iter_mut().for_each(|i| {
         max = usize::max(max, i.1);
         name_to_index.insert(i.0.clone(), index);
-        index += 1 + nb_stages;
+        index += if nb_stages > 1 { 2 } else { 1 } + nb_stages;
         i.0 = format!("dvar_{}", i.0);
     });
     for dvar in &dvars {
@@ -430,19 +486,17 @@ fn extract_symbols(
     if init_file.len() > 0 {
         eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys())
     }
-    let mut dvars = dvars
-        .into_iter()
-        .flat_map(|i| {
-            let mut vars = vec![i.clone()];
-            for j in 0..nb_stages {
-                vars.push((format!("tmp_{}_k{}", &i.0, (j + 1)), i.1));
-            }
-            if nb_stages > 1 {
-                vars.push((format!("tmp_{}_tmp", &i.0), i.1));
-            }
-            vars.into_iter()
-        })
-        .collect::<Vec<_>>();
+    let renaming = |i: (String, usize)| {
+        let mut vars = vec![i.clone()];
+        for j in 0..nb_stages {
+            vars.push((format!("tmp_{}_k{}", &i.0, (j + 1)), i.1));
+        }
+        if nb_stages > 1 {
+            vars.push((format!("tmp_{}_tmp", &i.0), i.1));
+        }
+        vars.into_iter()
+    };
+    let mut dvars = dvars.into_iter().flat_map(renaming).collect::<Vec<_>>();
 
     if let Some(noises) = &param.noises {
         for noise in noises {
@@ -541,12 +595,15 @@ fn extract_symbols(
         }
     }
 
+    println!("indx: {:?}", &name_to_index);
+    println!("dvars: {:?}", &dvars);
     let vars = Vars {
         t_max,
         dim,
         dirs,
         len,
         dvars,
+        integrators,
         noises: param.noises,
         phy,
         parent,
@@ -639,11 +696,11 @@ fn gen_init_kernel<'a>(
 }
 
 fn parse_symbols(
-    symbols: String,
+    symbols: Vec<String>,
     mut consts: HashMap<String, String>,
     mut dpdes: Vec<DPDE>,
     space_dim: usize,
-) -> (Vec<SFunction>, Vec<SPDE>, Vec<Init>) {
+) -> (Vec<SFunction>, Vec<Vec<SPDE>>, Vec<Init>) {
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
         re.replace_all(src, |caps: &Captures| {
@@ -653,7 +710,7 @@ fn parse_symbols(
     };
 
     let mut func = vec![];
-    let mut pdes = vec![];
+    let mut pdess = vec![];
     let mut init = vec![];
 
     let search_const = Regex::new(r"^\s*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
@@ -663,120 +720,123 @@ fn parse_symbols(
 
     use gpgpu::integrators::pde_parser::*;
     let mut lexer_idx = 0;
-    let mut funs = vec![];
 
-    for l in symbols.lines() {
-        if let Some(caps) = search_pde.captures(l) {
-            let var_name = caps[1].into();
-            let vec_dim = caps[3].parse().unwrap();
-            let boundary = caps[4].into();
-            dpdes.push(DPDE {
-                var_name,
-                boundary,
-                var_dim: space_dim,
-                vec_dim,
-            });
-        }
-    }
-
-    for l in symbols.lines() {
-        macro_rules! parse {
-            ($src:ident) => {{
-                let mut parsed = parse(&dpdes, lexer_idx, &$src);
-                lexer_idx += parsed.funs.len();
-                funs.append(&mut parsed.funs);
-                parsed.ocl
-            }};
-        }
-        if let Some(caps) = search_const.captures(l) {
-            let name = caps[1].into();
-            let mut src = replace(&caps[3], &consts);
-            if &caps[2] != ":" {
-                let mut res = parse!(src);
-                if res.len() == 1 {
-                    src = res.pop().unwrap();
-                } else {
-                    src = format!("[{}]", res.join(";"));
-                }
+    for symbols in symbols {
+        let mut pdes = vec![];
+        for l in symbols.lines() {
+            if let Some(caps) = search_pde.captures(l) {
+                let var_name = caps[1].into();
+                let vec_dim = caps[3].parse().unwrap();
+                let boundary = caps[4].into();
+                dpdes.push(DPDE {
+                    var_name,
+                    boundary,
+                    var_dim: space_dim,
+                    vec_dim,
+                });
             }
-            consts.insert(name, src);
         }
-        if let Some(caps) = search_func.captures(l) {
-            let name = caps[1].into();
-            let args = caps[2]
-                .split(",")
-                .map(|i| {
-                    let val = i.trim().to_string();
-                    if val.starts_with("_") {
-                        (val[1..].to_string(), Integer)
-                    } else if val.starts_with("*") {
-                        (val[1..].to_string(), Indexable)
+
+        for l in symbols.lines() {
+            macro_rules! parse {
+                ($src:ident) => {{
+                    let mut parsed = parse(&dpdes, lexer_idx, &$src);
+                    lexer_idx += parsed.funs.len();
+                    func.append(&mut parsed.funs);
+                    parsed.ocl
+                }};
+            }
+            if let Some(caps) = search_const.captures(l) {
+                let name = caps[1].into();
+                let mut src = replace(&caps[3], &consts);
+                if &caps[2] != ":" {
+                    let mut res = parse!(src);
+                    if res.len() == 1 {
+                        src = res.pop().unwrap();
                     } else {
-                        (val, Float)
+                        src = format!("[{}]", res.join(";"));
                     }
-                })
-                .collect();
-            let mut src = replace(&caps[4], &consts);
-            if &caps[3] != ":" {
-                let mut res = parse!(src);
-                if res.len() == 1 {
-                    src = res.pop().unwrap();
-                } else {
-                    panic!(
+                }
+                consts.insert(name, src);
+            }
+            if let Some(caps) = search_func.captures(l) {
+                let name = caps[1].into();
+                let args = caps[2]
+                    .split(",")
+                    .map(|i| {
+                        let val = i.trim().to_string();
+                        if val.starts_with("_") {
+                            (val[1..].to_string(), Integer)
+                        } else if val.starts_with("*") {
+                            (val[1..].to_string(), Indexable)
+                        } else {
+                            (val, Float)
+                        }
+                    })
+                    .collect();
+                let mut src = replace(&caps[4], &consts);
+                if &caps[3] != ":" {
+                    let mut res = parse!(src);
+                    if res.len() == 1 {
+                        src = res.pop().unwrap();
+                    } else {
+                        panic!(
                         "The result of parsing a 'function' must be a single value and not a Vect."
                     );
-                }
-            }
-            func.push(gen_func(name, args, src))
-        }
-        if let Some(caps) = search_pde.captures(l) {
-            let dvar: String = caps[1].into();
-            let src = replace(&caps[5], &consts);
-            let vec_dim = caps[3].parse::<usize>().unwrap();
-            let expr = if &caps[2] == ":" {
-                if src.starts_with("(") && src.ends_with(")") {
-                    let expr = src[1..src.len() - 1]
-                        .split(";")
-                        .map(|i| i.trim().to_string())
-                        .collect::<Vec<_>>();
-                    if expr.len() != vec_dim {
-                        panic!(
-                            "The vectarial dim={} of '{}' is different from de dim={} parsed.",
-                            vec_dim,
-                            dvar,
-                            expr.len()
-                        );
                     }
-                    expr
-                } else {
-                    vec![src]
                 }
-            } else {
-                parse!(src)
-            };
-            pdes.push(SPDE { dvar, expr });
-        }
-        if let Some(caps) = search_init.captures(l) {
-            let name = caps[1].into();
-            let src = replace(&caps[3], &consts);
-            let expr = if &caps[2] == ":" {
-                if src.starts_with("(") && src.ends_with(")") {
-                    src[1..src.len() - 1]
-                        .split(";")
-                        .map(|i| i.trim().to_string())
-                        .collect()
+                func.push(gen_func(name, args, src))
+            }
+            if let Some(caps) = search_pde.captures(l) {
+                let dvar: String = caps[1].into();
+                let src = replace(&caps[5], &consts);
+                let vec_dim = caps[3].parse::<usize>().unwrap();
+                let expr = if &caps[2] == ":" {
+                    if src.starts_with("(") && src.ends_with(")") {
+                        let expr = src[1..src.len() - 1]
+                            .split(";")
+                            .map(|i| i.trim().to_string())
+                            .collect::<Vec<_>>();
+                        if expr.len() != vec_dim {
+                            panic!(
+                                "The vectarial dim={} of '{}' is different from de dim={} parsed.",
+                                vec_dim,
+                                dvar,
+                                expr.len()
+                            );
+                        }
+                        expr
+                    } else {
+                        vec![src]
+                    }
                 } else {
-                    vec![src]
-                }
-            } else {
-                parse!(src)
-            };
-            init.push(Init { name, expr });
+                    parse!(src)
+                };
+                pdes.push(SPDE { dvar, expr });
+            }
+            if let Some(caps) = search_init.captures(l) {
+                let name = caps[1].into();
+                let src = replace(&caps[3], &consts);
+                let expr = if &caps[2] == ":" {
+                    if src.starts_with("(") && src.ends_with(")") {
+                        src[1..src.len() - 1]
+                            .split(";")
+                            .map(|i| i.trim().to_string())
+                            .collect()
+                    } else {
+                        vec![src]
+                    }
+                } else {
+                    parse!(src)
+                };
+                init.push(Init { name, expr });
+            }
         }
+
+        pdes.iter_mut()
+            .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
+        pdess.push(pdes);
     }
 
-    pdes.iter_mut()
-        .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
-
-    (func, pdes, init)
+    (func, pdess, init)
 }
