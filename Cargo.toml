@@ -12,3 +12,4 @@ serde_yaml = "0.8"
 gpgpu = { path = "../gpgpu-rs" }
 regex = "1.3.7"
 clap = "2.33.0"
+ron = "*"
