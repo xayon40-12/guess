@@ -15,10 +15,9 @@ use gpgpu::{
     Dim::{self, *},
     DimDir,
 };
+use std::io::Write;
 
 use std::collections::{HashMap, HashSet};
-#[cfg(debug_assertions)]
-use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
@@ -307,7 +306,7 @@ fn extract_symbols(
                 nb_stages = 1;
                 dt
             }
-            Integrator::ProjectoCorrector { dt } => {
+            Integrator::PC { dt } => {
                 nb_stages = 2;
                 dt
             }
@@ -379,7 +378,7 @@ fn extract_symbols(
                     ));
                     1
                 }
-                Integrator::ProjectoCorrector { dt } => {
+                Integrator::PC { dt } => {
                     h = h.create_algorithm(create_projector_corrector_pde(
                         integrator,
                         *dt,
@@ -595,8 +594,6 @@ fn extract_symbols(
         }
     }
 
-    println!("indx: {:?}", &name_to_index);
-    println!("dvars: {:?}", &dvars);
     let vars = Vars {
         t_max,
         dim,
@@ -721,7 +718,7 @@ fn parse_symbols(
     use gpgpu::integrators::pde_parser::*;
     let mut lexer_idx = 0;
 
-    for symbols in symbols {
+    for (i, symbols) in symbols.into_iter().enumerate() {
         let mut pdes = vec![];
         for l in symbols.lines() {
             if let Some(caps) = search_pde.captures(l) {
@@ -737,10 +734,15 @@ fn parse_symbols(
             }
         }
 
-        for l in symbols.lines() {
+        for (j, l) in symbols.lines().enumerate() {
             macro_rules! parse {
                 ($src:ident) => {{
-                    let mut parsed = parse(&dpdes, lexer_idx, &$src);
+                    let mut parsed = parse(&dpdes, lexer_idx, &$src).expect(&format!(
+                        "Parse error in sub-process {} line {}:\n|------------\n{}\n|------------\n",
+                        i + 1,
+                        j + 1,
+                        &$src,
+                    ));
                     lexer_idx += parsed.funs.len();
                     func.append(&mut parsed.funs);
                     parsed.ocl
