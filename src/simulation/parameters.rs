@@ -24,7 +24,7 @@ pub enum PrmType {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Integrator {
     Euler { dt: f64 },
-    ProjectoCorrector { dt: f64 },
+    PC { dt: f64 }, // ProjectorCorrector
     RK4 { dt: f64 },
 }
 
