@@ -3,38 +3,76 @@ import sys
 import os
 
 
-args = [i for i in sys.argv if '-g' not in i]
-thisname=args.pop(0)
-runname=os.popen("echo $(which %s_run 2> /dev/null)" % thisname[thisname.rfind('/')+1:thisname.rfind('_')]).read().strip()
-thisname=os.popen("echo $(which %s 2> /dev/null)" % thisname[thisname.rfind('/')+1:]).read().strip()
-CGType = [i for i in sys.argv if '-g' in i]
+args = [i for i in sys.argv if "-g" not in i]
+thisname = args.pop(0)
+runname = (
+    os.popen(
+        "echo $(which %s_run 2> /dev/null)"
+        % thisname[thisname.rfind("/") + 1 : thisname.rfind("_")]
+    )
+    .read()
+    .strip()
+)
+thisname = (
+    os.popen("echo $(which %s 2> /dev/null)" % thisname[thisname.rfind("/") + 1 :])
+    .read()
+    .strip()
+)
+CGType = [i for i in sys.argv if "-g" in i]
 if len(CGType) > 0:
     CGType = CGType[0][2:]
 else:
     CGType = "V100"
 
-def sub(name,num):
-    suffix=""
-    if num != None:
-        name = "%s:=%d" % (name,num)
-    command = "qsub -P P_nantheo -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN='%s' -v EXEC_RUN='%s' %s" % (CGType, name, runname, thisname)
+
+def sub(name, job, start, num):
+    if job != None or start != None:
+        job = job if job else 0
+        start = start if start else 0
+        if num != None:
+            name = "%s:%d=%d" % (name, num, start + job * num)
+        else:
+            name = "%s:=%d" % (name, start + job)
+    else:
+        if num != None:
+            name = "%s:%d" % (name, num)
+    command = (
+        "qsub -P P_nantheo -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v USHF_RUN='%s' -v EXEC_RUN='%s' %s"
+        % (CGType, name, runname, thisname)
+    )
     print(command)
     os.system(command)
 
+
 if len(args) > 0:
     for arg in args:
-        rs = arg.rfind('/')
+        rs = arg.rfind("/")
+        eq = arg.rfind("=")
+        left = ""
+        start = None
         if rs != -1:
-            left = arg[:rs+1]
-            vals = arg[rs+1:].split(':')
+            left = arg[: rs + 1]
+            if eq != -1:
+                vals = arg[rs + 1 : eq]
+                start = int(arg[eq + 1 :])
+            else:
+                vals = arg[rs + 1 :]
         else:
-            left = ''
-            vals = arg.split(':')
-        name = "%s/%s%s" % (os.getcwd(),left,vals[0])
+            if eq != -1:
+                vals = arg[:eq]
+                start = int(arg[eq + 1 :])
+            else:
+                vals = arg
+        vals = vals.split(":")
+        name = "%s/%s%s" % (os.getcwd(), left, vals[0])
         if len(vals) > 1 and vals[1]:
+            if len(vals) > 2:
+                num = int(vals[2])
+            else:
+                num = None
             for i in range(int(vals[1])):
-                sub(name, i)
+                sub(name, i, start, num)
         else:
-            sub(name, None)
+            sub(name, None, start, None)
 else:
     os.system('bash -l -c "$EXEC_RUN"')
