@@ -328,7 +328,16 @@ fn extract_symbols(
     }
 
     let mut noises_names = HashSet::new();
-    let mut dpdes = vec![];
+    let mut dpdes = param
+        .fields
+        .iter()
+        .map(|f| DPDE {
+            var_name: f.name.clone(),
+            boundary: f.boundary.clone(),
+            var_dim: dirs.len(),
+            vec_dim: f.vect_dim.unwrap_or(1),
+        })
+        .collect::<Vec<_>>();
     if let Some(noises) = &param.noises {
         for noise in noises {
             if !noises_names.insert(noise.name().to_string()) {
@@ -343,7 +352,7 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
-    let (func, pdess, init) = parse_symbols(param.symbols, consts, dpdes, dirs.len());
+    let (func, pdess, init) = parse_symbols(param.symbols, consts, dpdes);
     for f in func {
         h = h.create_function(f);
     }
@@ -702,8 +711,7 @@ fn gen_init_kernel<'a>(
 fn parse_symbols(
     symbols: Vec<String>,
     mut consts: HashMap<String, String>,
-    mut dpdes: Vec<DPDE>,
-    space_dim: usize,
+    dpdes: Vec<DPDE>,
 ) -> (Vec<SFunction>, Vec<Vec<SPDE>>, Vec<Init>) {
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
@@ -717,9 +725,15 @@ fn parse_symbols(
     let mut pdess = vec![];
     let mut init = vec![];
 
+    let hdpdes = dpdes
+        .iter()
+        .map(|d| (&d.var_name, d))
+        .collect::<HashMap<&String, &DPDE>>();
+
     let search_const = Regex::new(r"^\s*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s+(:?)=\s*(.+?)\s*$").unwrap();
-    let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)([0-9]+),(\w+)=\s*(.+?)\s*$").unwrap();
+    let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let _search_e = Regex::new(r"^\s*(\w+)|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
 
     use gpgpu::integrators::pde_parser::*;
@@ -727,20 +741,6 @@ fn parse_symbols(
 
     for (i, symbols) in symbols.into_iter().enumerate() {
         let mut pdes = vec![];
-        for l in symbols.lines() {
-            if let Some(caps) = search_pde.captures(l) {
-                let var_name = caps[1].into();
-                let vec_dim = caps[3].parse().unwrap();
-                let boundary = caps[4].into();
-                dpdes.push(DPDE {
-                    var_name,
-                    boundary,
-                    var_dim: space_dim,
-                    vec_dim,
-                });
-            }
-        }
-
         for (j, l) in symbols.lines().enumerate() {
             macro_rules! parse {
                 ($src:ident) => {{
@@ -755,6 +755,7 @@ fn parse_symbols(
                     parsed.ocl
                 }};
             }
+            let mut found = false;
             if let Some(caps) = search_const.captures(l) {
                 let name = caps[1].into();
                 let mut src = replace(&caps[3], &consts);
@@ -767,6 +768,7 @@ fn parse_symbols(
                     }
                 }
                 consts.insert(name, src);
+                found = true;
             }
             if let Some(caps) = search_func.captures(l) {
                 let name = caps[1].into();
@@ -794,12 +796,13 @@ fn parse_symbols(
                     );
                     }
                 }
-                func.push(gen_func(name, args, src))
+                func.push(gen_func(name, args, src));
+                found = true;
             }
             if let Some(caps) = search_pde.captures(l) {
                 let dvar: String = caps[1].into();
-                let src = replace(&caps[5], &consts);
-                let vec_dim = caps[3].parse::<usize>().unwrap();
+                let src = replace(&caps[3], &consts);
+                let vec_dim = hdpdes.get(&dvar).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &dvar)).vec_dim;
                 let expr = if &caps[2] == ":" {
                     if src.starts_with("(") && src.ends_with(")") {
                         let expr = src[1..src.len() - 1]
@@ -822,6 +825,7 @@ fn parse_symbols(
                     parse!(src)
                 };
                 pdes.push(SPDE { dvar, expr });
+                found = true;
             }
             if let Some(caps) = search_init.captures(l) {
                 let name = caps[1].into();
@@ -839,6 +843,14 @@ fn parse_symbols(
                     parse!(src)
                 };
                 init.push(Init { name, expr });
+                found = true;
+            }
+            if !found {
+                panic!(
+                    "Line {} of sub-process {} could not be parsed.",
+                    j + 1,
+                    i + 1
+                );
             }
         }
 
