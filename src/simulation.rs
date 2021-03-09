@@ -31,7 +31,7 @@ use regex::{Captures, Regex};
 
 pub enum NumType {
     Single(usize),
-    Multiple(usize),
+    Multiple(usize, usize), // (quantity,start)
     NoNum,
 }
 use NumType::*;
@@ -142,23 +142,30 @@ impl Simulation {
             }
             Ok(())
         };
+        macro_rules! done {
+            ($parent:ident) => {
+                let mut done = std::fs::File::create(format!("{}/config/done", $parent))?;
+                done.write_all(b"done")?;
+            };
+        }
         match num {
             Single(n) => {
                 let parent = format!("{}{}", parent, n);
                 run(&parent, n as _)?;
+                done! {parent}
             }
-            Multiple(n) => {
-                for i in 0..n {
+            Multiple(n, start) => {
+                for i in start..n + start {
                     let parent = format!("{}{}", parent, i);
                     run(&parent, i as _)?;
+                    done! {parent}
                 }
             }
             NoNum => {
                 run(&parent, 0)?;
+                done! {parent}
             }
         }
-        let mut done = std::fs::File::create(format!("{}/config/done", parent))?;
-        done.write_all(b"done")?;
         Ok(())
     }
 

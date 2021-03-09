@@ -22,18 +22,27 @@ fn main() -> gpgpu::Result<()> {
                           .get_matches();
 
     let var = "USHF_RUN";
-    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(=?)(\d+))?").unwrap();
+    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(\d*)(=?)(\d+))?").unwrap();
     let extract = |param: &str| {
         let caps = rarg.captures(param).expect("Input args should be in the form \"file_name:number\" where \":number\" is optional (\"file_name\" may contains \":\").");
         let param: String = caps[1].into();
-        let num = if let Some(num) = caps.get(3).and_then(|n| Some(n.as_str())) {
+        let num = if let Some(num) = caps.get(4).and_then(|n| Some(n.as_str())) {
             let num = num
                 .parse::<usize>()
-                .expect(&format!("Could not convert \"{}\" to number.", &caps[3]));
-            if caps.get(2).map_or("", |c| c.as_str()) == "=" {
-                Single(num)
+                .expect(&format!("Could not convert \"{}\" to number.", &caps[4]));
+            if caps.get(3).map_or("", |c| c.as_str()) == "=" {
+                if let Some((start, num)) = caps.get(2).and_then(|n| {
+                    n.as_str()
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|n| Some((num, n)))
+                }) {
+                    Multiple(num, start)
+                } else {
+                    Single(num)
+                }
             } else {
-                Multiple(num)
+                Multiple(num, 0)
             }
         } else {
             NoNum
