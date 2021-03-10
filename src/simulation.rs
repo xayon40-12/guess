@@ -132,7 +132,7 @@ impl Simulation {
                 "Could not create destination directory \"{:?}\"",
                 &target
             ));
-            let dst = format!("{}/config/param.yaml", parent);
+            let dst = format!("{}/config/param.ron", parent);
             std::fs::write(&dst, &paramstr)
                 .expect(&format!("Could not write parameter file to \"{}\"", dst));
             if let Some(mut sim) =
