@@ -263,6 +263,7 @@ fn extract_symbols(
 
     let (dims, phy) = param.config.dim.into();
     let dim: Dim = dims.into();
+    let global_dim = dim.len();
     let dirs = param.config.dirs.clone();
     let t_max = param.config.t_max;
 
@@ -327,13 +328,15 @@ fn extract_symbols(
         consts.insert("ivdt".to_string(), format!("{:e}", 1.0 / dt));
     }
 
+    let default_boundary = "periodic";
     let mut noises_names = HashSet::new();
     let mut dpdes = param
         .fields
+        .unwrap_or(vec![])
         .iter()
         .map(|f| DPDE {
             var_name: f.name.clone(),
-            boundary: f.boundary.clone(),
+            boundary: f.boundary.clone().unwrap_or(default_boundary.into()),
             var_dim: dirs.len(),
             vec_dim: f.vect_dim.unwrap_or(1),
         })
@@ -352,7 +355,14 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
-    let (func, pdess, init) = parse_symbols(param.symbols, consts, dpdes);
+    let (func, pdess, init) = parse_symbols(
+        param.symbols,
+        consts,
+        dpdes,
+        dirs.len(),
+        global_dim,
+        default_boundary,
+    );
     for f in func {
         h = h.create_function(f);
     }
@@ -709,9 +719,12 @@ fn gen_init_kernel<'a>(
 }
 
 fn parse_symbols(
-    symbols: Vec<String>,
+    mut symbols: Vec<String>,
     mut consts: HashMap<String, String>,
-    dpdes: Vec<DPDE>,
+    mut dpdes: Vec<DPDE>,
+    dim: usize,
+    global_dim: usize,
+    default_boundary: &str,
 ) -> (Vec<SFunction>, Vec<Vec<SPDE>>, Vec<Init>) {
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
@@ -725,28 +738,60 @@ fn parse_symbols(
     let mut pdess = vec![];
     let mut init = vec![];
 
-    let hdpdes = dpdes
-        .iter()
-        .map(|d| (&d.var_name, d))
-        .collect::<HashMap<&String, &DPDE>>();
-
     let search_const = Regex::new(r"^\s*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)=\s*(.+?)\s*$").unwrap();
-    let _search_e = Regex::new(r"^\s*(\w+)|\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let _search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
 
     use gpgpu::integrators::pde_parser::*;
     let mut lexer_idx = 0;
 
+    for symbols in &symbols {
+        for l in symbols.lines() {
+            // search for pdes or expressions
+            if let Some(caps) = search_pde.captures(l).or(_search_e.captures(l)) {
+                let name = &caps[1];
+                if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
+                    // if a pde is not referenced add it to the known pdes with default
+                    // vec_dim of one and the default boundary function
+                    dpdes.push(DPDE {
+                        var_name: name.into(),
+                        var_dim: dim,
+                        vec_dim: 1,
+                        boundary: default_boundary.into(),
+                    })
+                }
+            }
+        }
+    }
+
+    let hdpdes = dpdes
+        .iter()
+        .map(|d| (&d.var_name, d))
+        .collect::<HashMap<&String, &DPDE>>();
+
+    symbols.insert(
+        0,
+        format!(
+            "modx := (x+x_size)%x_size
+    mody := (y+y_size)%y_size
+    modz := (z+z_size)%z_size
+    periodic1(_x,_w,_w_size,*u) := u[w + w_size*modx]
+    periodic2(_x,_y,_w,_w_size,*u) := u[w + w_size*(modx + x_size*mody)]
+    periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]
+    periodic := periodic{}",
+            global_dim
+        ),
+    );
     for (i, symbols) in symbols.into_iter().enumerate() {
         let mut pdes = vec![];
         for (j, l) in symbols.lines().enumerate() {
             macro_rules! parse {
                 ($src:ident) => {{
-                    let mut parsed = parse(&dpdes, lexer_idx, &$src).expect(&format!(
+                    let mut parsed = parse(&dpdes, lexer_idx, global_dim, &$src).expect(&format!(
                         "Parse error in sub-process {} line {}:\n|------------\n{}\n|------------\n",
-                        i + 1,
+                        i,
                         j + 1,
                         &$src,
                     ));
@@ -846,11 +891,7 @@ fn parse_symbols(
                 found = true;
             }
             if !found {
-                panic!(
-                    "Line {} of sub-process {} could not be parsed.",
-                    j + 1,
-                    i + 1
-                );
+                panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
             }
         }
 
