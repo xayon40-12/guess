@@ -1,12 +1,14 @@
-use serde::{Deserialize,Serialize};
 use crate::simulation::Vars;
-use gpgpu::algorithms::{moments_to_cumulants,AlgorithmParam::*,MomentsParam,ReduceParam,Window};
-use std::io::Write;
-use gpgpu::{Dim::*,DimDir::*};
+use gpgpu::algorithms::{
+    moments_to_cumulants, AlgorithmParam::*, MomentsParam, ReduceParam, Window,
+};
 use gpgpu::descriptors::KernelArg::*;
+use gpgpu::{Dim::*, DimDir::*};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 
-#[derive(Deserialize,Serialize,Debug,Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
     Moments(Vec<String>),
     StaticStructureFactor(Vec<String>),
@@ -17,12 +19,18 @@ pub enum Action {
 }
 pub use Action::*;
 
-pub type Callback = Box<dyn FnMut(&mut gpgpu::Handler,&Vars,f64) -> gpgpu::Result<()>>;
+pub type Callback = Box<dyn FnMut(&mut gpgpu::Handler, &Vars, f64) -> gpgpu::Result<()>>;
 
 fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
-    let write = |f,c: &str| std::fs::OpenOptions::new().create(true).append(true).open(&format!("{}/{}",parent,f))?.write_all(c.as_bytes());
-    if let Err(e) = write(file_name,content) {
-        eprintln!("Could not write to file \"{}\".\n{:?}",file_name,e);
+    let write = |f, c: &str| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&format!("{}/{}", parent, f))?
+            .write_all(c.as_bytes())
+    };
+    if let Err(e) = write(file_name, content) {
+        eprintln!("Could not write to file \"{}\".\n{:?}", file_name, e);
     }
 }
 
@@ -42,42 +50,67 @@ macro_rules! gen {
 }
 
 fn strip<'a>(s: &'a str) -> String {
-    s.replace("dvar_","").replace("swap_","").into()
+    s.replace("dvar_", "").replace("swap_", "").into()
 }
 
 // This function might be used with same first and second buffer as it compute only order 1 and 2
-fn moms(w: u32, vars: &Vars, bufs: &[&'static str], h: &mut gpgpu::Handler, complex: bool) -> gpgpu::Result<Vec<String>> {
-    let mut dim: [usize;3] = vars.dim.into();
+fn moms(
+    w: u32,
+    vars: &Vars,
+    bufs: &[&'static str],
+    h: &mut gpgpu::Handler,
+    complex: bool,
+) -> gpgpu::Result<Vec<String>> {
+    let mut dim: [usize; 3] = vars.dim.into();
     let mut dirs = vars.dim.all_dirs();
     dirs.retain(|v| !vars.dirs.contains(&v));
     let mul = if complex { 2 } else { 1 };
-    let prm = MomentsParam{ num: 2, vect_dim: w*mul, packed: false };
-    h.run_algorithm("moments", dim.into(),&dirs, bufs, Ref(&prm))?;
+    let prm = MomentsParam {
+        num: 2,
+        vect_dim: w * mul,
+        packed: false,
+    };
+    h.run_algorithm("moments", dim.into(), &dirs, bufs, Ref(&prm))?;
     dirs.iter().for_each(|d| dim[*d as usize] = 1);
-    let len = dim[0]*dim[1]*dim[2];
-    h.run_arg("to_var",D1(len*w as usize*mul as usize),&[BufArg(bufs[3],"src")])?;
-    let res = h.get_firsts(bufs[3],len*2*w as usize)?;
+    let len = dim[0] * dim[1] * dim[2];
+    h.run_arg(
+        "to_var",
+        D1(len * w as usize * mul as usize),
+        &[BufArg(bufs[3], "src")],
+    )?;
+    let res = h.get_firsts(bufs[3], len * 2 * w as usize)?;
     let res = if complex {
-        unsafe { 
+        unsafe {
             let mut res: Vec<f64> = std::mem::transmute(res.VF64_2());
-            res.set_len(2*len*2*w as usize);
+            res.set_len(2 * len * 2 * w as usize);
             res
         }
     } else {
         res.VF64()
     };
-    Ok(res.chunks(len*w as usize*mul as usize)
-        .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
+    Ok(res
+        .chunks(len * w as usize * mul as usize)
+        .map(|c| {
+            c.iter()
+                .map(|i| format!("{:e}", i))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
         .collect::<Vec<String>>())
 }
 
-impl Action { //WARNING these actions only work on scalar data yet (vectorial not supported)
+impl Action {
+    //WARNING these actions only work on scalar data yet (vectorial not supported)
     // To use vectorial data, the dim of the data must be known here
-    pub fn to_callback(&self, name_to_index: &HashMap<String,usize>, _num_pdes: usize) -> Callback {
+    pub fn to_callback(
+        &self,
+        name_to_index: &HashMap<String, usize>,
+        _num_pdes: usize,
+    ) -> Callback {
         match self {
             Window(names) => {
                 let mut current = String::new();
-                gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                     if head { current = String::new(); }
                     let w = vars.dvars[id].1;
                     let dim: [usize; 3] = vars.dim.into();
@@ -111,7 +144,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                             let win = h.get_firsts("sum",w as _)?.VF64();
                             let name = strip(&vars.dvars[id].0);
                             write_all(&vars.parent, "window.yaml", &format!("{}  {}\n      win: [{}]\n",
-                                    if head { format!("- t: {:e}\n", t) } else { "".into() }, 
+                                    if head { format!("- t: {:e}\n", t) } else { "".into() },
                                     if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
                             win.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
                             ));
@@ -128,8 +161,9 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                                 cumulants_app
                         ));
                     }
-                }}},
-            Moments(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+                }}
+            }
+            Moments(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let num = 4;
                 let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
@@ -159,7 +193,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     ));
                 }
             }},
-            StaticStructureFactor(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+            StaticStructureFactor(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let len = vars.len;
                 h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
@@ -179,32 +213,36 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     ));
                 }
             }},
-            DynamicStructureFactor(names) =>  { let mut first = true; let mut start = "-"; gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
-                let w = vars.dvars[id].1;
-                let len = vars.len;
-                h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
-                h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], Ref(&w))?;
-                if first {
-                    first = false;
-                    h.copy("dstFFT","initFFT")?;
-                }
-                h.run_arg("kc_times_conj", D1(len*w as usize), &[BufArg("initFFT","a"),BufArg("dstFFT","b"),BufArg("dstFFT","dst")])?;
-                let phy = vars.phy.iter().fold(1.0, |a,i| if *i == 0.0 { a } else { i*a });
-                h.run_arg("ctimes", D1(len*w as usize*2), &[BufArg("dstFFT","src"),Param("c",phy.into()),BufArg("dstFFT","dst")])?;
-                if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                    let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
-                    write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n      sigma_DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms[0],moms[1]
-                    ));
-                } else {
-                    let moms = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
-                    write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms.iter().flatten().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
-                    ));
-                }
-                start = " ";
-            }}},
-            Correlation(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+            DynamicStructureFactor(names) => {
+                let mut first = true;
+                let mut start = "-";
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                    let w = vars.dvars[id].1;
+                    let len = vars.len;
+                    h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
+                    h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], Ref(&w))?;
+                    if first {
+                        first = false;
+                        h.copy("dstFFT","initFFT")?;
+                    }
+                    h.run_arg("kc_times_conj", D1(len*w as usize), &[BufArg("initFFT","a"),BufArg("dstFFT","b"),BufArg("dstFFT","dst")])?;
+                    let phy = vars.phy.iter().fold(1.0, |a,i| if *i == 0.0 { a } else { i*a });
+                    h.run_arg("ctimes", D1(len*w as usize*2), &[BufArg("dstFFT","src"),Param("c",phy.into()),BufArg("dstFFT","dst")])?;
+                    if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                        let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
+                        write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n      sigma_DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
+                        moms[0],moms[1]
+                        ));
+                    } else {
+                        let moms = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
+                        write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
+                        moms.iter().flatten().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                        ));
+                    }
+                    start = " ";
+                }}
+            }
+            Correlation(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let len = vars.len;
                 let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
@@ -226,7 +264,7 @@ impl Action { //WARNING these actions only work on scalar data yet (vectorial no
                     ));
                 }
             }},
-            RawData(names) => gen!{names,id,head,name_to_index,num_pdes,h,vars,t, {
+            RawData(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let len = vars.len;
                 let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
