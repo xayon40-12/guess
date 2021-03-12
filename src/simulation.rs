@@ -774,9 +774,9 @@ fn parse_symbols(
     symbols.insert(
         0,
         format!(
-            "modx := (x+x_size)%x_size
-    mody := (y+y_size)%y_size
-    modz := (z+z_size)%z_size
+            "modx := ((x+x_size)%x_size)
+    mody := ((y+y_size)%y_size)
+    modz := ((z+z_size)%z_size)
     periodic1(_x,_w,_w_size,*u) := u[w + w_size*modx]
     periodic2(_x,_y,_w,_w_size,*u) := u[w + w_size*(modx + x_size*mody)]
     periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]
