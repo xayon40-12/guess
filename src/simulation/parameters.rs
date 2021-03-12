@@ -96,7 +96,7 @@ pub struct Config {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Field {
     pub name: String,
-    pub boundary: String,
+    pub boundary: Option<String>,
     pub vect_dim: Option<usize>,
 }
 
@@ -104,7 +104,7 @@ pub struct Field {
 pub struct Param {
     pub data_files: Option<Vec<String>>,
     pub actions: Vec<(Action, Repetition)>,
-    pub fields: Vec<Field>,
+    pub fields: Option<Vec<Field>>,
     pub noises: Option<Vec<Noises>>,
     pub symbols: Vec<String>,
     pub config: Config,
