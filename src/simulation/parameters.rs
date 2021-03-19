@@ -9,7 +9,7 @@ pub mod activations;
 pub use activations::ActivationCallback;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Init {
+pub struct EqDescriptor {
     pub name: String,
     pub expr: Vec<String>,
 }
