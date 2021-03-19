@@ -266,11 +266,31 @@ impl Action {
             }},
             RawData(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
-                let len = vars.len;
-                let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
-                write_all(&vars.parent, "raw.yaml", &format!("{}  {}:\n    raw: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
-                ));
+                if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                    let num = 4;
+                    let dir = [X,Y,Z].iter().take(vars.dim.len()).filter(|i| !vars.dirs.contains(i)).map(|i| *i).collect::<Vec<gpgpu::DimDir>>();
+                    let mut dim: [usize;3] = vars.dim.into();
+                    dir.iter().for_each(|d| dim[*d as usize] = 1);
+                    let len = dim[0]*dim[1]*dim[2];
+                    let prm = MomentsParam{ num, vect_dim: w, packed: false };
+                    h.run_algorithm("moments", vars.dim, &dir, &[&vars.dvars[id].0,"tmp","tmp2","sum"], Ref(&prm))?;
+                    let res = h.get_firsts("sum",num as usize*len*w as usize)?.VF64();
+                    let cumulants = moments_to_cumulants(&res,len*w as usize);//.chunks((num*w) as _).fold(vec![vec![];num as _], |mut acc,i| {i.chunks(w as _).enumerate().for_each(|(i,v)| acc[i].extend_from_slice(v)); acc});
+                    let moms = cumulants.chunks(len*w as usize)
+                        .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(" "))
+                        .collect::<Vec<String>>();
+                    let mut data = String::new();
+                    for (m,name) in moms.iter().zip((1..).map(|i| format!("<raw^{}>c",i))) {
+                        data += &format!("{} {} {}\n", t, name, m);
+                    }
+                    write_all(&vars.parent, "raw.txt", &data);
+                } else {
+                    let len = vars.len;
+                    let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
+                    write_all(&vars.parent, "raw.yaml", &format!("{}  {}:\n    raw: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                            raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                    ));
+                }
             }},
         }
     }
