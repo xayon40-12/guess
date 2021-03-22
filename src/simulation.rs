@@ -7,7 +7,8 @@ use gpgpu::descriptors::{
 use gpgpu::functions::SFunction;
 use gpgpu::integrators::pde_parser::DPDE;
 use gpgpu::integrators::{
-    create_euler_pde, create_projector_corrector_pde, create_rk4_pde, IntegratorParam, SPDE,
+    create_euler_pde, create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam,
+    SPDE,
 };
 use gpgpu::kernels::SKernel;
 use gpgpu::{handler::HandlerBuilder, Handler};
@@ -23,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod parameters;
 use parameters::Noises::{self, *};
 pub use parameters::{
-    ActivationCallback, Callback, Init, Integrator, Param,
+    ActivationCallback, Callback, EqDescriptor, Integrator, Param,
     PrmType::{self, *},
 };
 
@@ -36,6 +37,14 @@ pub enum NumType {
 }
 use NumType::*;
 
+#[derive(Debug)]
+pub struct EquationKernel {
+    kernel_name: String,
+    args: Vec<(String, String)>,
+    buf_var: String,
+    buf_tmp: String,
+}
+
 pub struct Vars {
     pub t_max: f64,
     pub dim: Dim,
@@ -43,9 +52,10 @@ pub struct Vars {
     pub dirs: Vec<DimDir>,
     pub len: usize,
     pub dvars: Vec<(String, u32)>,
-    pub integrators: Vec<(String, Vec<String>)>,
+    pub stages: Vec<(Option<(String, Vec<String>)>, Vec<EquationKernel>)>,
     pub noises: Option<Vec<Noises>>,
     pub parent: String,
+    pub dt: f64,
 }
 
 pub struct Simulation {
@@ -176,10 +186,11 @@ impl Simulation {
             dirs: _,
             len,
             dvars: _,
-            ref integrators,
+            ref stages,
             ref noises,
             phy: _,
             parent: _,
+            dt,
         } = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
 
@@ -195,7 +206,7 @@ impl Simulation {
         }
         #[cfg(debug_assertions)]
         let (mut pred, int) = (intprm.t, t_max / 100.0);
-        while intprm.t < t_max {
+        while intprm.t <= t_max {
             #[cfg(debug_assertions)]
             if intprm.t >= pred + int {
                 pred = intprm.t;
@@ -223,12 +234,27 @@ impl Simulation {
                 }
             }
 
-            //TODO run all integrator_i for each usb-process with the conresponding dvars
-            for (integrator, vars) in integrators {
-                let vars = vars.iter().map(|i| &i[..]).collect::<Vec<_>>();
-                self.handler
-                    .run_algorithm(integrator, dim, &[], &vars, Mut(&mut intprm))?;
+            for (inte, equs) in stages {
+                for equ in equs {
+                    let mut args = equ
+                        .args
+                        .iter()
+                        .map(|(b, n)| BufArg(b, n))
+                        .collect::<Vec<_>>();
+                    args.push(Param("t", intprm.t.into()));
+                    self.handler.run_arg(&equ.kernel_name, dim, &args[..])?;
+                }
+                if let Some((integrator, vars)) = inte {
+                    let vars = vars.iter().map(|i| &i[..]).collect::<Vec<_>>();
+                    self.handler
+                        .run_algorithm(integrator, dim, &[], &vars, Ref(&intprm))?;
+                }
+                for equ in equs {
+                    self.handler.copy(&equ.buf_tmp, &equ.buf_var)?;
+                }
             }
+            //WARNING,TODO time t incremented only after each subprocesses, consider if it needs to be incremented per subprocess
+            intprm.t += dt;
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
@@ -307,28 +333,16 @@ fn extract_symbols(
         );
     }
 
-    let nb_stages;
-    {
-        let dt = match &param.integrator {
-            Integrator::Euler { dt } => {
-                nb_stages = 1;
-                dt
-            }
-            Integrator::PC { dt } => {
-                nb_stages = 2;
-                dt
-            }
-            Integrator::RK4 { dt } => {
-                nb_stages = 4;
-                dt
-            }
-        };
+    let (nb_stages, dt, creator): (usize, f64, CreatePDE) = match &param.integrator {
+        Integrator::Euler { dt } => (1, *dt, create_euler_pde),
+        Integrator::PC { dt } => (2, *dt, create_projector_corrector_pde),
+        Integrator::RK4 { dt } => (4, *dt, create_rk4_pde),
+    };
 
-        consts.insert("dt".to_string(), format!("{:e}", dt));
-        consts.insert("ivdt".to_string(), format!("{:e}", 1.0 / dt));
-    }
+    consts.insert("dt".to_string(), format!("{:e}", dt));
+    consts.insert("ivdt".to_string(), format!("{:e}", 1.0 / dt));
 
-    let default_boundary = "periodic";
+    let default_boundary = &format!("periodic{}", global_dim);
     let mut noises_names = HashSet::new();
     let mut dpdes = param
         .fields
@@ -355,7 +369,7 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
-    let (func, pdess, init) = parse_symbols(
+    let (func, pdess, init, equationss) = parse_symbols(
         param.symbols,
         consts,
         dpdes,
@@ -378,6 +392,18 @@ fn extract_symbols(
             }
         }
     }
+    for equs in &equationss {
+        for i in equs {
+            if dvars_names.insert(i.name.clone()) {
+                dvars.push((i.name.clone(), i.expr.len()));
+            } else {
+                dvars.iter().for_each(|(n,l)| if n == &i.name && l != &i.expr.len() {
+                    panic!("The equation \"{}\" should have the same vectorial length as the pde \"{}\"", &i.name, n);
+                })
+            }
+        }
+    }
+    let nb_pdess = pdess.len();
     for (i, pdes) in pdess.into_iter().enumerate() {
         if pdes.len() > 0 {
             let integrator = &format!("integrator_{}", i);
@@ -393,38 +419,13 @@ fn extract_symbols(
             int_other_pdes.append(&mut noises_names.clone());
             others.append(&mut noises_names.clone());
             let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
-            let nb_stages = match &param.integrator {
-                Integrator::Euler { dt } => {
-                    h = h.create_algorithm(create_euler_pde(
-                        integrator,
-                        *dt,
-                        pdes,
-                        Some(others),
-                        vec![("t".into(), CF64)],
-                    ));
-                    1
-                }
-                Integrator::PC { dt } => {
-                    h = h.create_algorithm(create_projector_corrector_pde(
-                        integrator,
-                        *dt,
-                        pdes,
-                        Some(others),
-                        vec![("t".into(), CF64)],
-                    ));
-                    2
-                }
-                Integrator::RK4 { dt } => {
-                    h = h.create_algorithm(create_rk4_pde(
-                        integrator,
-                        *dt,
-                        pdes,
-                        Some(others),
-                        vec![("t".into(), CF64)],
-                    ));
-                    4
-                }
-            };
+            h = h.create_algorithm(creator(
+                integrator,
+                dt,
+                pdes,
+                Some(others),
+                vec![("t".into(), CF64)],
+            ));
             let mut buffers = pde_buffers
                 .iter()
                 .flat_map(|name| {
@@ -439,16 +440,21 @@ fn extract_symbols(
                 })
                 .collect::<Vec<_>>();
             buffers.append(&mut int_other_pdes);
-            integrators.push((integrator.to_string(), buffers));
+            integrators.push(Some((integrator.to_string(), buffers)));
+        } else {
+            integrators.push(None);
         }
     }
 
     let mut init_kernels = vec![];
+
+    let mut init_equ_args = vec![KCBuffer("dst", CF64)];
+    init_equ_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
+    init_equ_args.extend(noises_names.iter().map(|n| KCBuffer(&n, CF64)));
+    let mut init_equ_args: Vec<SKernelConstructor> =
+        init_equ_args.into_iter().map(|a| a.into()).collect();
+
     if init.len() > 0 {
-        let mut args = vec![KCBuffer("dst", CF64)];
-        args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
-        args.extend(noises_names.iter().map(|n| KCBuffer(&n, CF64)));
-        let args: Vec<SKernelConstructor> = args.into_iter().map(|a| (&a).into()).collect();
         for ini in init {
             let len = dvars
                 .iter()
@@ -459,8 +465,50 @@ fn extract_symbols(
                 ))
                 .1;
             let name = format!("init_{}", &ini.name);
-            h = h.create_kernel(gen_init_kernel(&name, len, args.clone(), ini));
+            h = h.create_kernel(gen_init_kernel(&name, len, init_equ_args.clone(), ini));
             init_kernels.push(name);
+        }
+    }
+
+    let mut equation_kernelss = vec![];
+    init_equ_args.push(KCParam("t", CF64).into());
+    if equationss.len() > 0 {
+        for (i, equs) in equationss.into_iter().enumerate() {
+            let mut equation_kernels = vec![];
+            for equ in equs {
+                let name = equ.name.clone();
+                let mut others = dvars
+                    .iter()
+                    .filter(|i| i.0 != name)
+                    .map(|i| (i.0.clone(), format!("dvar_{}", &i.0)))
+                    .collect::<Vec<_>>();
+                others.append(
+                    &mut noises_names
+                        .iter()
+                        .map(|n| (n.to_string(), n.to_string()))
+                        .collect::<Vec<_>>(),
+                );
+                let buf_var = format!("dvar_{}", &name);
+                let buf_tmp = format!("tmp_dvar_{}_k1", &name);
+                let mut args = vec![
+                    (buf_var.clone(), name.clone()),
+                    (buf_tmp.clone(), "dst".to_string()),
+                ];
+                args.append(&mut others);
+                let kernel_name = format!("equ_{}_{}", &name, nb_pdess + i);
+                h = h.create_kernel(gen_single_stage_kernel(
+                    &kernel_name,
+                    init_equ_args.clone(),
+                    equ,
+                ));
+                equation_kernels.push(EquationKernel {
+                    kernel_name,
+                    args,
+                    buf_var,
+                    buf_tmp,
+                });
+            }
+            equation_kernelss.push(equation_kernels);
         }
     }
 
@@ -620,16 +668,22 @@ fn extract_symbols(
         }
     }
 
+    let stages = integrators
+        .into_iter()
+        .zip(equation_kernelss.into_iter())
+        .collect::<Vec<_>>();
+
     let vars = Vars {
         t_max,
         dim,
         dirs,
         len,
         dvars,
-        integrators,
+        stages,
         noises: param.noises,
         phy,
         parent,
+        dt,
     };
     let callbacks = param
         .actions
@@ -685,28 +739,22 @@ fn gen_func(name: String, args: Vec<(String, PrmType)>, src: String) -> SFunctio
     }
 }
 
-fn gen_init_kernel<'a>(
+fn gen_single_stage_kernel<'a>(
     name: &'a str,
-    len: usize,
     args: Vec<SKernelConstructor>,
-    ini: Init,
+    eqd: EqDescriptor,
 ) -> SKernel {
-    if len != ini.expr.len() {
-        panic!(
-            "Then dim of the initial condition should be the same as the dpe, name: \"{}\"",
-            name
-        );
-    }
+    let len = eqd.expr.len();
     let mut id = "x+x_size*(y+y_size*z)".to_string();
     if len > 1 {
         id = format!("{}*({})", len, id);
     }
     let expr = if len == 1 {
-        format!("    dst[_i] = {};\n", &ini.expr[0])
+        format!("    dst[_i] = {};\n", &eqd.expr[0])
     } else {
         let mut expr = String::new();
         for i in 0..len {
-            expr += &format!("    dst[{i}+_i] = {};\n", &ini.expr[i], i = i);
+            expr += &format!("    dst[{i}+_i] = {};\n", &eqd.expr[i], i = i);
         }
         expr
     };
@@ -718,6 +766,21 @@ fn gen_init_kernel<'a>(
     }
 }
 
+fn gen_init_kernel<'a>(
+    name: &'a str,
+    len: usize,
+    args: Vec<SKernelConstructor>,
+    ini: EqDescriptor,
+) -> SKernel {
+    if len != ini.expr.len() {
+        panic!(
+            "Then dim of the initial condition should be the same as the dpe, name: \"{}\"",
+            name
+        );
+    }
+    gen_single_stage_kernel(name, args, ini)
+}
+
 fn parse_symbols(
     mut symbols: Vec<String>,
     mut consts: HashMap<String, String>,
@@ -725,7 +788,12 @@ fn parse_symbols(
     dim: usize,
     global_dim: usize,
     default_boundary: &str,
-) -> (Vec<SFunction>, Vec<Vec<SPDE>>, Vec<Init>) {
+) -> (
+    Vec<SFunction>,
+    Vec<Vec<SPDE>>,
+    Vec<EqDescriptor>,
+    Vec<Vec<EqDescriptor>>,
+) {
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
         re.replace_all(src, |caps: &Captures| {
@@ -737,11 +805,12 @@ fn parse_symbols(
     let mut func = vec![];
     let mut pdess = vec![];
     let mut init = vec![];
+    let mut equationss = vec![];
 
     let search_const = Regex::new(r"^\s*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)=\s*(.+?)\s*$").unwrap();
-    let _search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
 
     use gpgpu::integrators::pde_parser::*;
@@ -750,7 +819,7 @@ fn parse_symbols(
     for symbols in &symbols {
         for l in symbols.lines() {
             // search for pdes or expressions
-            if let Some(caps) = search_pde.captures(l).or(_search_e.captures(l)) {
+            if let Some(caps) = search_pde.captures(l).or(search_e.captures(l)) {
                 let name = &caps[1];
                 if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
                     // if a pde is not referenced add it to the known pdes with default
@@ -779,13 +848,12 @@ fn parse_symbols(
     modz := ((z+z_size)%z_size)
     periodic1(_x,_w,_w_size,*u) := u[w + w_size*modx]
     periodic2(_x,_y,_w,_w_size,*u) := u[w + w_size*(modx + x_size*mody)]
-    periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]
-    periodic := periodic{}",
-            global_dim
+    periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]"
         ),
     );
     for (i, symbols) in symbols.into_iter().enumerate() {
         let mut pdes = vec![];
+        let mut equations = vec![];
         for (j, l) in symbols.lines().enumerate() {
             macro_rules! parse {
                 ($src:ident) => {{
@@ -872,24 +940,30 @@ fn parse_symbols(
                 pdes.push(SPDE { dvar, expr });
                 found = true;
             }
-            if let Some(caps) = search_init.captures(l) {
-                let name = caps[1].into();
-                let src = replace(&caps[3], &consts);
-                let expr = if &caps[2] == ":" {
-                    if src.starts_with("(") && src.ends_with(")") {
-                        src[1..src.len() - 1]
-                            .split(";")
-                            .map(|i| i.trim().to_string())
-                            .collect()
-                    } else {
-                        vec![src]
+            macro_rules! equ {
+                ($search:ident $arr:ident) => {
+                    if let Some(caps) = $search.captures(l) {
+                        let name = caps[1].into();
+                        let src = replace(&caps[3], &consts);
+                        let expr = if &caps[2] == ":" {
+                            if src.starts_with("(") && src.ends_with(")") {
+                                src[1..src.len() - 1]
+                                    .split(";")
+                                    .map(|i| i.trim().to_string())
+                                    .collect()
+                            } else {
+                                vec![src]
+                            }
+                        } else {
+                            parse!(src)
+                        };
+                        $arr.push(EqDescriptor { name, expr });
+                        found = true;
                     }
-                } else {
-                    parse!(src)
                 };
-                init.push(Init { name, expr });
-                found = true;
             }
+            equ! {search_init init}
+            equ! {search_e equations}
             if !found {
                 panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
             }
@@ -898,7 +972,8 @@ fn parse_symbols(
         pdes.iter_mut()
             .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
         pdess.push(pdes);
+        equationss.push(equations);
     }
 
-    (func, pdess, init)
+    (func, pdess, init, equationss)
 }
