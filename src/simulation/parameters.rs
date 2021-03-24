@@ -33,12 +33,12 @@ pub enum Noises {
     Uniform {
         name: String,
         dim: Option<usize>,
-        boundary: String,
+        boundary: Option<String>,
     },
     Normal {
         name: String,
         dim: Option<usize>,
-        boundary: String,
+        boundary: Option<String>,
     },
 }
 
@@ -52,7 +52,9 @@ impl Noises {
     pub fn boundary(&self) -> String {
         use Noises::*;
         match self {
-            Uniform { boundary, .. } | Normal { boundary, .. } => boundary.clone(),
+            Uniform { boundary, .. } | Normal { boundary, .. } => {
+                boundary.clone().unwrap_or("periodic".into())
+            }
         }
     }
     pub fn dim(&self) -> Option<usize> {
