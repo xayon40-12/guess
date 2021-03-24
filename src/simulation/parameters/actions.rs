@@ -288,7 +288,7 @@ impl Action {
                 } else {
                     let len = vars.len;
                     let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
-                    write_all(&vars.parent, "raw.yaml", &format!("{:e} {} {}\n", t, var_name,
+                    write_all(&vars.parent, "raw.txt", &format!("{:e} {} {}\n", t, var_name,
                             raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(" ")
                     ));
                 }
