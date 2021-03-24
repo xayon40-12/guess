@@ -322,16 +322,18 @@ fn extract_symbols(
     h = h.load_kernel("moments_to_cumulants");
 
     let mut consts = HashMap::new();
+    let mut dxyz = 1.0;
     for i in (0..3).filter(|&i| phy[i] != 0.0) {
-        consts.insert(
-            ["dx", "dy", "dz"][i].to_string(),
-            format!("{:e}", phy[i] / dims[i] as f64),
-        );
+        let d = phy[i] / dims[i] as f64;
+        dxyz *= d;
+        consts.insert(["dx", "dy", "dz"][i].to_string(), format!("{:e}", d));
         consts.insert(
             ["ivdx", "ivdy", "ivdz"][i].to_string(),
-            format!("{:e}", dims[i] as f64 / phy[i]),
+            format!("{:e}", 1.0 / d),
         );
     }
+    consts.insert("dxyz".to_string(), dxyz.to_string());
+    consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
     let (nb_stages, dt, creator): (usize, f64, CreatePDE) = match &param.integrator {
         Integrator::Euler { dt } => (1, *dt, create_euler_pde),
@@ -342,7 +344,6 @@ fn extract_symbols(
     consts.insert("dt".to_string(), format!("{:e}", dt));
     consts.insert("ivdt".to_string(), format!("{:e}", 1.0 / dt));
 
-    let default_boundary = &format!("periodic{}", global_dim);
     let mut noises_names = HashSet::new();
     let mut dpdes = param
         .fields
@@ -350,7 +351,7 @@ fn extract_symbols(
         .iter()
         .map(|f| DPDE {
             var_name: f.name.clone(),
-            boundary: f.boundary.clone().unwrap_or(default_boundary.into()),
+            boundary: f.boundary.clone().unwrap_or("periodic".into()),
             var_dim: dirs.len(),
             vec_dim: f.vect_dim.unwrap_or(1),
         })
@@ -369,14 +370,8 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
-    let (func, pdess, init, equationss) = parse_symbols(
-        param.symbols,
-        consts,
-        dpdes,
-        dirs.len(),
-        global_dim,
-        default_boundary,
-    );
+    let (func, pdess, init, equationss) =
+        parse_symbols(param.symbols, consts, dpdes, dirs.len(), global_dim);
     for f in func {
         h = h.create_function(f);
     }
@@ -787,7 +782,6 @@ fn parse_symbols(
     mut dpdes: Vec<DPDE>,
     dim: usize,
     global_dim: usize,
-    default_boundary: &str,
 ) -> (
     Vec<SFunction>,
     Vec<Vec<SPDE>>,
@@ -828,7 +822,7 @@ fn parse_symbols(
                         var_name: name.into(),
                         var_dim: dim,
                         vec_dim: 1,
-                        boundary: default_boundary.into(),
+                        boundary: "periodic".into(),
                     })
                 }
             }
@@ -840,6 +834,12 @@ fn parse_symbols(
         .map(|d| (&d.var_name, d))
         .collect::<HashMap<&String, &DPDE>>();
 
+    let choice = |c: [&str; 3]| {
+        c.iter()
+            .take(global_dim)
+            .map(|s| s.to_string())
+            .collect::<String>()
+    };
     symbols.insert(
         0,
         format!(
@@ -848,7 +848,11 @@ fn parse_symbols(
     modz := ((z+z_size)%z_size)
     periodic1(_x,_w,_w_size,*u) := u[w + w_size*modx]
     periodic2(_x,_y,_w,_w_size,*u) := u[w + w_size*(modx + x_size*mody)]
-    periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]"
+    periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]
+    periodic({}_w,_w_size,*u) := periodic{}({}w,w_size,u)",
+            choice(["_x,", "_y,", "_z,"]),
+            global_dim,
+            choice(["x,", "y,", "z,"])
         ),
     );
     for (i, symbols) in symbols.into_iter().enumerate() {
