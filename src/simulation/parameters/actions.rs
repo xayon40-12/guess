@@ -264,8 +264,9 @@ impl Action {
                     ));
                 }
             }},
-            RawData(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+            RawData(names) => gen! {names,id,_head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
+                let var_name = strip(&vars.dvars[id].0);
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let num = 4;
                     let dir = [X,Y,Z].iter().take(vars.dim.len()).filter(|i| !vars.dirs.contains(i)).map(|i| *i).collect::<Vec<gpgpu::DimDir>>();
@@ -280,15 +281,15 @@ impl Action {
                         .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(" "))
                         .collect::<Vec<String>>();
                     let mut data = String::new();
-                    for (m,name) in moms.iter().zip((1..).map(|i| format!("<raw^{}>c",i))) {
-                        data += &format!("{} {} {}\n", t, name, m);
+                    for (m,name) in moms.iter().zip((1..).map(|i| format!("<{}^{}>c",var_name,i))) {
+                        data += &format!("{:e} {} {}\n", t, name, m);
                     }
                     write_all(&vars.parent, "raw.txt", &data);
                 } else {
                     let len = vars.len;
                     let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
-                    write_all(&vars.parent, "raw.yaml", &format!("{}  {}:\n    raw: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                            raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                    write_all(&vars.parent, "raw.yaml", &format!("{:e} {} {}\n", t, var_name,
+                            raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(" ")
                     ));
                 }
             }},
