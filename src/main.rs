@@ -42,7 +42,17 @@ fn main() -> gpgpu::Result<()> {
                     Single(num)
                 }
             } else {
-                Multiple(num, 0)
+                if let Some(dec) = caps.get(2).and_then(|i| {
+                    Some(
+                        i.as_str()
+                            .parse::<usize>()
+                            .expect(&format!("Could not convert \"{}\" to number.", &caps[2])),
+                    )
+                }) {
+                    Multiple(dec * 10 + num, 0)
+                } else {
+                    Multiple(num, 0)
+                }
             }
         } else {
             NoNum
