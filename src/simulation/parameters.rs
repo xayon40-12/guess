@@ -85,7 +85,7 @@ impl From<DimPhy> for ([usize; 3], [f64; 3]) {
         match d {
             DimPhy::D1((u, f)) => ([u, 1, 1], [f, 0.0, 0.0]),
             DimPhy::D2((u0, f0), (u1, f1)) => ([u0, u1, 1], [f0, f1, 0.0]),
-            DimPhy::D2S((u, f)) => ([u, u, u], [f, f, f]),
+            DimPhy::D2S((u, f)) => ([u, u, 1], [f, f, 0.0]),
             DimPhy::D3((u0, f0), (u1, f1), (u2, f2)) => ([u0, u1, u2], [f0, f1, f2]),
             DimPhy::D3S((u, f)) => ([u, u, u], [f, f, f]),
         }
