@@ -118,8 +118,8 @@ impl Action {
                     let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
                     let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
                         let len = len + 1;
-                        let wins: Vec<Window> = vars.dirs.iter().map(|_d| {
-                            Window{ offset: 0, len}
+                        let wins: Vec<Window> = vars.dirs.iter().enumerate().map(|(i,d)| {
+                            Window{ offset: 0, len: if i == 0 { len } else { dim[usize::from(d)] }}
                         }).collect();
                         (wins,len)
                     }).collect();
