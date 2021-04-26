@@ -3,17 +3,23 @@ use gpgpu::algorithms::{
     moments_to_cumulants, AlgorithmParam::*, MomentsParam, ReduceParam, Window,
 };
 use gpgpu::descriptors::KernelArg::*;
+use gpgpu::kernels::radial_mean;
 use gpgpu::{Dim::*, DimDir::*};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 
+#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
+pub enum Shape {
+    All,
+    Radial,
+}
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
     Moments(Vec<String>),
-    StaticStructureFactor(Vec<String>),
+    StaticStructureFactor(Vec<String>, Option<Shape>),
     DynamicStructureFactor(Vec<String>),
-    Correlation(Vec<String>),
+    Correlation(Vec<String>, Option<Shape>),
     RawData(Vec<String>),
     Window(Vec<String>), // buffers
 }
@@ -60,7 +66,7 @@ fn moms(
     bufs: &[&'static str],
     h: &mut gpgpu::Handler,
     complex: bool,
-) -> gpgpu::Result<Vec<String>> {
+) -> gpgpu::Result<Vec<Vec<f64>>> {
     let mut dim: [usize; 3] = vars.dim.into();
     let mut dirs = vars.dim.all_dirs();
     dirs.retain(|v| !vars.dirs.contains(&v));
@@ -90,13 +96,14 @@ fn moms(
     };
     Ok(res
         .chunks(len * w as usize * mul as usize)
-        .map(|c| {
-            c.iter()
-                .map(|i| format!("{:e}", i))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .collect::<Vec<String>>())
+        .map(|i| i.iter().map(|v| *v).collect::<Vec<f64>>())
+        .collect::<Vec<_>>())
+}
+fn vtos(v: &Vec<f64>) -> String {
+    v.iter()
+        .map(|i| format!("{:e}", i))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 impl Action {
@@ -193,26 +200,39 @@ impl Action {
                     ));
                 }
             }},
-            StaticStructureFactor(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
-                let w = vars.dvars[id].1;
-                let len = vars.len;
-                h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
-                h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], Ref(&w))?;
-                h.run_arg("kc_sqrmod", D1(len*w as usize), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
-                let phy = vars.phy.iter().fold(1.0, |a,i| if *i == 0.0 { a } else { i*a });
-                h.run_arg("ctimes", D1(len*w as usize), &[BufArg("tmp","src"),Param("c",phy.into()),BufArg("tmp","dst")])?;
-                if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                    let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
-                    write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    SF: [{}]\n    sigma_SF: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        moms[0], moms[1]
-                    ));
-                } else {
-                    let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
-                    write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    SF: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
-                    ));
-                }
-            }},
+            StaticStructureFactor(names, shape) => {
+                let shape = *shape;
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                    let w = vars.dvars[id].1;
+                    let len = vars.len;
+                    h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
+                    h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], Ref(&w))?;
+                    h.run_arg("kc_sqrmod", D1(len*w as usize), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
+                    let phy = vars.phy.iter().fold(1.0, |a,i| if *i == 0.0 { a } else { i*a });
+                    h.run_arg("ctimes", D1(len*w as usize), &[BufArg("tmp","src"),Param("c",phy.into()),BufArg("tmp","dst")])?;
+                    let dim: [usize;3] = vars.dim.into();
+                    let phy = vars.phy;
+                    if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                        let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
+                        let (moms,name) = match shape.unwrap_or(Shape::Radial) {
+                            Shape::All => (moms, "SF"),
+                            Shape::Radial => (moms.into_iter().map(|m| radial_mean(&m,&dim,&phy)).collect(),"radial_SF"),
+                        };
+                        write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    {name}: [{}]\n    sigma_{name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                            vtos(&moms[0]), vtos(&moms[1]), name=name
+                        ));
+                    } else {
+                        let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
+                        let (moms,name) = match shape.unwrap_or(Shape::Radial) {
+                            Shape::All => (moms,"SF"),
+                            Shape::Radial => (radial_mean(&moms, &dim, &phy), "radial_SF"),
+                        };
+                        write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    {name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                            moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","), name=name
+                        ));
+                    }
+                }}
+            }
             DynamicStructureFactor(names) => {
                 let mut first = true;
                 let mut start = "-";
@@ -231,7 +251,7 @@ impl Action {
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                         let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
                         write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n      sigma_DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        moms[0],moms[1]
+                        vtos(&moms[0]),vtos(&moms[1])
                         ));
                     } else {
                         let moms = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
@@ -242,7 +262,9 @@ impl Action {
                     start = " ";
                 }}
             }
-            Correlation(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+            Correlation(names, shape) => {
+                let shape = *shape;
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let len = vars.len;
                 let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
@@ -252,18 +274,29 @@ impl Action {
                 h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
                 h.run_arg("vcminus", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("moments","c"),BufArg("sum","dst"),Param("size",[dim[0],dim[1],dim[2],w].into()),Param("vect_dim",w.into())])?;
                 h.run_algorithm("correlation",vars.dim,&vars.dirs,&["sum","tmp"],Ref(&w))?;
+                    let dim: [usize;3] = vars.dim.into();
+                    let phy = vars.phy;
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
-                    write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    correlation: [{}]\n    sigma_correlation: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms[0],moms[1]
+                        let (moms,name) = match shape.unwrap_or(Shape::Radial) {
+                            Shape::All => (moms, "SF"),
+                            Shape::Radial => (moms.into_iter().map(|m| radial_mean(&m,&dim,&phy)).collect(),"radial_SF"),
+                        };
+                    write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    {name}: [{}]\n    sigma_{name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                    vtos(&moms[0]),vtos(&moms[1]), name=name
                     ));
                 } else {
                     let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
-                    write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    correlation: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                        let (moms,name) = match shape.unwrap_or(Shape::Radial) {
+                            Shape::All => (moms, "correlation"),
+                            Shape::Radial => (radial_mean(&moms,&dim,&phy),"radial_correlation"),
+                        };
+                    write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    {name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
+                    moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","), name=name
                     ));
                 }
-            }},
+                }}
+            }
             RawData(names) => gen! {names,id,_head,name_to_index,num_pdes,h,vars,t, {
                 let w = vars.dvars[id].1;
                 let var_name = strip(&vars.dvars[id].0);
