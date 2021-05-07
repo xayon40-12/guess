@@ -100,17 +100,20 @@ fn moms(
         .collect::<Vec<_>>())
 }
 fn vtos<T, F: Fn(&T) -> String>(v: &[T], f: F) -> String {
-    v.iter().map(|i| f(i)).collect::<Vec<_>>().join(",")
+    v.iter().map(|i| f(i)).collect::<Vec<_>>().join(" ")
 }
 fn enot(v: &f64) -> String {
     format!("{:e}", v)
 }
 fn renot(v: &Radial) -> String {
-    format!("{:e};{:e}", v.pos, v.val)
+    format!("{:e};{:e}", v.pos, v.val) // <coord>;<number>
+}
+fn cenot(v: &[f64; 2]) -> String {
+    format!("{:e}j{:e}", v[0], v[1]) // complex number <real>j<imaginary>
 }
 
 impl Action {
-    //WARNING these actions only work on scalar data yet (vectorial not supported)
+    //FIXME novectorial: these actions only work on scalar data yet (vectorial not supported)
     // To use vectorial data, the dim of the data must be known here
     pub fn to_callback(
         &self,
@@ -119,61 +122,42 @@ impl Action {
     ) -> Callback {
         match self {
             Window(names) => {
-                let mut current = String::new();
                 gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
-                    if head { current = String::new(); }
-                    let w = vars.dvars[id].1;
-                    let dim: [usize; 3] = vars.dim.into();
-                    let dxs = dim.iter().zip(vars.phy.iter()).fold(1.0, |a,i| if *i.1 > 0.0 { a*i.1/(*i.0) as f64 } else { a });
-                    let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
-                    let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
-                        let len = len + 1;
-                        let wins: Vec<Window> = vars.dirs.iter().enumerate().map(|(i,d)| {
-                            Window{ offset: 0, len: if i == 0 { len } else { dim[usize::from(d)] }}
-                        }).collect();
-                        (wins,len)
+                    let var_name = strip(&vars.dvars[id].0);
+                let w = vars.dvars[id].1;
+                let dim: [usize; 3] = vars.dim.into();
+                let dxs = dim.iter().zip(vars.phy.iter()).fold(1.0, |a,i| if *i.1 > 0.0 { a*i.1/(*i.0) as f64 } else { a });
+                let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
+                let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
+                    let len = len + 1;
+                    let wins: Vec<Window> = vars.dirs.iter().enumerate().map(|(i,d)| {
+                        Window{ offset: 0, len: if i == 0 { len } else { dim[usize::from(d)] }}
                     }).collect();
-                    let num = 4;
-                    let mut moments_app = String::new();
-                    let mut cumulants_app = String::new();
-                    for (window,app) in windows {
-                        let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
-                        h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
-                        let mut dim: [usize;3] = vars.dim.into();
-                        vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
-                        let len = dim.iter().fold(1, |a,i| a*i);
-                        h.run_arg("ctimes", D1(len*w as usize), &[BufArg("sum","src"),Param("c",dxs.into()),BufArg("sum","dst")])?;
-                        if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                            let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
-                            h.run_algorithm("moments", D1(len), &[X], &["sum","tmp2","tmp","summoments"], Ref(&prm))?;
-                            let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
-                            let cumulants = moments_to_cumulants(&moments, w as _);
-                            moments_app = format!("{}      {}: [{}]\n", moments_app, app, vtos(&moments,enot));
-                            cumulants_app = format!("{}      {}: [{}]\n", cumulants_app, app, vtos(&cumulants,enot));
-                        } else {
-                            let win = h.get_firsts("sum",w as _)?.VF64();
-                            let name = strip(&vars.dvars[id].0);
-                            write_all(&vars.parent, "window.yaml", &format!("{}  {}\n      win: [{}]\n",
-                                    if head { format!("- t: {:e}\n", t) } else { "".into() },
-                                    if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
-                            vtos(&win,enot),
-                            ));
-                            head = false;
-                            current = strip(&vars.dvars[id].0);
-                        }
-                    }
+                    (wins,len)
+                }).collect();
+                let num = 4;
+                for (window,app) in windows {
+                    let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
+                    h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
+                    let mut dim: [usize;3] = vars.dim.into();
+                    vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                    let len = dim.iter().fold(1, |a,i| a*i);
+                    h.run_arg("ctimes", D1(len*w as usize), &[BufArg("sum","src"),Param("c",dxs.into()),BufArg("sum","dst")])?;
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                        let name = strip(&vars.dvars[id].0);
-                        write_all(&vars.parent, "window.yaml", &format!("{}  {}:\n    moments:\n{}    cumulants:\n{}",
-                                if head { format!("- t: {:e}\n", t) } else { "".into() },
-                                name,
-                                moments_app,
-                                cumulants_app
-                        ));
+                        let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
+                        h.run_algorithm("moments", D1(len), &[X], &["sum","tmp2","tmp","summoments"], Ref(&prm))?;
+                        let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
+                        let cumulants = moments_to_cumulants(&moments, w as _);
+                        write_all(&vars.parent, "windows.txt", &format!("{:e}|{}|moments_{}|{}\n", t, var_name, app, vtos(&moments,enot)));
+                        write_all(&vars.parent, "windows.txt", &format!("{:e}|{}|cumulants_{}|{}\n", t, var_name, app, vtos(&cumulants,enot)));
+                    } else {
+                        let win = h.get_firsts("sum",w as _)?.VF64();
+                        write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, app, vtos(&win,enot)));
                     }
-                }}
+                }}}
             }
             Moments(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                let var_name = strip(&vars.dvars[id].0);
                 let w = vars.dvars[id].1;
                 let num = 4;
                 let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
@@ -191,21 +175,21 @@ impl Action {
                     let moms = res.chunks(num*w as usize)
                         .map(|c| vtos(c,enot))
                         .collect::<Vec<String>>();
-                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms[0],moms[1],cumulants
-                    ));
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}\n", t, var_name,&moms[0]));
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
+
                 } else {
                     let moments = h.get_firsts("moments",num*w as usize)?.VF64();
                     let cumulants = moments_to_cumulants(&moments, w as _);
-                    write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    vtos(&moments,enot),
-                    vtos(&cumulants,enot)
-                    ));
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}\n", t, var_name,vtos(&moments,enot)));
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vtos(&cumulants,enot)));
                 }
             }},
             StaticStructureFactor(names, shape) => {
                 let shape = *shape;
                 gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
                     h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
@@ -221,18 +205,15 @@ impl Action {
                             Shape::All => (moms.iter().map(|i| vtos(i,enot)).collect::<Vec<_>>(), "SF"),
                             Shape::Radial => (moms.into_iter().map(|m| vtos(&radial_mean(&m,&dim,&phy),renot)).collect::<Vec<_>>(),"radial_SF"),
                         };
-                        write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    {name}: [{}]\n    sigma_{name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                            &moms[0], &moms[1], name=name
-                        ));
+                        write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
+                        write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                     } else {
                         let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
                         let (moms,name) = match shape.unwrap_or(Shape::Radial) {
                             Shape::All => (vtos(&moms,enot),"SF"),
                             Shape::Radial => (vtos(&radial_mean(&moms, &dim, &phy),renot), "radial_SF"),
                         };
-                        write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    {name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                            moms, name=name
-                        ));
+                        write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
                     }
                 }}
             }
@@ -240,6 +221,7 @@ impl Action {
                 let mut first = true;
                 let mut start = "-";
                 gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
                     h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
@@ -253,21 +235,18 @@ impl Action {
                     h.run_arg("ctimes", D1(len*w as usize*2), &[BufArg("dstFFT","src"),Param("c",phy.into()),BufArg("dstFFT","dst")])?;
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                         let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
-                        write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n      sigma_DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        vtos(&moms[0],enot),vtos(&moms[1],enot)
-                        ));
+                        write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|DSF|{}\n", t, var_name, vtos(&moms[0],enot)));
+                        write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|sigma_DSF|{}\n", t, var_name, vtos(&moms[1],enot)));
                     } else {
                         let moms = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
-                        write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        moms.iter().flatten().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
-                        ));
+                        write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|DSF|{}\n", t, var_name, vtos(&moms,cenot)));
                     }
-                    start = " ";
                 }}
             }
             Correlation(names, shape) => {
                 let shape = *shape;
                 gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                let var_name = strip(&vars.dvars[id].0);
                 let w = vars.dvars[id].1;
                 let len = vars.len;
                 let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
@@ -285,17 +264,16 @@ impl Action {
                             Shape::All => (moms.iter().map(|i| vtos(i,enot)).collect::<Vec<_>>(), "correlation"),
                             Shape::Radial => (moms.into_iter().map(|m| vtos(&radial_mean(&m,&dim,&phy),renot)).collect::<Vec<_>>(),"cadial_Correlation"),
                         };
-                    write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    {name}: [{}]\n    sigma_{name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    &moms[0],&moms[1], name=name
-                    ));
+                    write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
+                    write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                 } else {
                     let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
                         let (moms,name) = match shape.unwrap_or(Shape::Radial) {
-                            Shape::All => (moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","), "correlation"),
-                            Shape::Radial => (radial_mean(&moms,&dim,&phy).iter().map(|i| format!("{:e};{:e}", i.pos, i.val)).collect::<Vec<_>>().join(","),"radial_correlation"),
+                            Shape::All => (vtos(&moms,enot), "correlation"),
+                            Shape::Radial => (vtos(&radial_mean(&moms,&dim,&phy),renot),"radial_correlation"),
                         };
-                    write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    {name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms, name=name
+                    write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name,name,
+                    moms
                     ));
                 }
                 }}
@@ -318,13 +296,13 @@ impl Action {
                         .collect::<Vec<String>>();
                     let mut data = String::new();
                     for (m,name) in moms.iter().zip((1..).map(|i| format!("<{}^{}>c",var_name,i))) {
-                        data += &format!("{:e} {} {}\n", t, name, m);
+                        data += &format!("{:e}|{}|raw|{}\n", t, name, m);
                     }
                     write_all(&vars.parent, "raw.txt", &data);
                 } else {
                     let len = vars.len;
                     let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
-                    write_all(&vars.parent, "raw.txt", &format!("{:e} {} {}\n", t, var_name,
+                    write_all(&vars.parent, "raw.txt", &format!("{:e}|{}|raw|{}\n", t, var_name,
                             vtos(&raw,enot)
                     ));
                 }
