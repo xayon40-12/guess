@@ -3,7 +3,7 @@ use gpgpu::algorithms::{
     moments_to_cumulants, AlgorithmParam::*, MomentsParam, ReduceParam, Window,
 };
 use gpgpu::descriptors::KernelArg::*;
-use gpgpu::kernels::radial_mean;
+use gpgpu::kernels::{radial_mean, Radial};
 use gpgpu::{Dim::*, DimDir::*};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -99,11 +99,14 @@ fn moms(
         .map(|i| i.iter().map(|v| *v).collect::<Vec<f64>>())
         .collect::<Vec<_>>())
 }
-fn vtos(v: &Vec<f64>) -> String {
-    v.iter()
-        .map(|i| format!("{:e}", i))
-        .collect::<Vec<_>>()
-        .join(",")
+fn vtos<T, F: Fn(&T) -> String>(v: &[T], f: F) -> String {
+    v.iter().map(|i| f(i)).collect::<Vec<_>>().join(",")
+}
+fn enot(v: &f64) -> String {
+    format!("{:e}", v)
+}
+fn renot(v: &Radial) -> String {
+    format!("{:e};{:e}", v.pos, v.val)
 }
 
 impl Action {
@@ -145,15 +148,15 @@ impl Action {
                             h.run_algorithm("moments", D1(len), &[X], &["sum","tmp2","tmp","summoments"], Ref(&prm))?;
                             let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
                             let cumulants = moments_to_cumulants(&moments, w as _);
-                            moments_app = format!("{}      {}: [{}]\n", moments_app, app, moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","));
-                            cumulants_app = format!("{}      {}: [{}]\n", cumulants_app, app, cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","));
+                            moments_app = format!("{}      {}: [{}]\n", moments_app, app, vtos(&moments,enot));
+                            cumulants_app = format!("{}      {}: [{}]\n", cumulants_app, app, vtos(&cumulants,enot));
                         } else {
                             let win = h.get_firsts("sum",w as _)?.VF64();
                             let name = strip(&vars.dvars[id].0);
                             write_all(&vars.parent, "window.yaml", &format!("{}  {}\n      win: [{}]\n",
                                     if head { format!("- t: {:e}\n", t) } else { "".into() },
                                     if name != current { format!("{}:\n    {}:", name, app) } else { format!("  {}:", app) },
-                            win.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
+                            vtos(&win,enot),
                             ));
                             head = false;
                             current = strip(&vars.dvars[id].0);
@@ -184,9 +187,9 @@ impl Action {
                     h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;// WARNING use "moments" twice because num=2, if num>2 a tmp buffer is needed
                     h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
                     let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
-                    let cumulants = moments_to_cumulants(&res[0..(num*w as usize)],w as _).iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",");
+                    let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
                     let moms = res.chunks(num*w as usize)
-                        .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","))
+                        .map(|c| vtos(c,enot))
                         .collect::<Vec<String>>();
                     write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    sigma_moments: [{}]\n    cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
                     moms[0],moms[1],cumulants
@@ -195,8 +198,8 @@ impl Action {
                     let moments = h.get_firsts("moments",num*w as usize)?.VF64();
                     let cumulants = moments_to_cumulants(&moments, w as _);
                     write_all(&vars.parent, "moments.yaml", &format!("{}  {}:\n    moments: [{}]\n    cumulants: [{}]\n",if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moments.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","),
-                    cumulants.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(",")
+                    vtos(&moments,enot),
+                    vtos(&cumulants,enot)
                     ));
                 }
             }},
@@ -215,20 +218,20 @@ impl Action {
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                         let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
                         let (moms,name) = match shape.unwrap_or(Shape::Radial) {
-                            Shape::All => (moms, "SF"),
-                            Shape::Radial => (moms.into_iter().map(|m| radial_mean(&m,&dim,&phy)).collect(),"radial_SF"),
+                            Shape::All => (moms.iter().map(|i| vtos(i,enot)).collect::<Vec<_>>(), "SF"),
+                            Shape::Radial => (moms.into_iter().map(|m| vtos(&radial_mean(&m,&dim,&phy),renot)).collect::<Vec<_>>(),"radial_SF"),
                         };
                         write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    {name}: [{}]\n    sigma_{name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                            vtos(&moms[0]), vtos(&moms[1]), name=name
+                            &moms[0], &moms[1], name=name
                         ));
                     } else {
                         let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
                         let (moms,name) = match shape.unwrap_or(Shape::Radial) {
-                            Shape::All => (moms,"SF"),
-                            Shape::Radial => (radial_mean(&moms, &dim, &phy), "radial_SF"),
+                            Shape::All => (vtos(&moms,enot),"SF"),
+                            Shape::Radial => (vtos(&radial_mean(&moms, &dim, &phy),renot), "radial_SF"),
                         };
                         write_all(&vars.parent, "static_structure_factor.yaml", &format!("{}  {}:\n    {name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                            moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","), name=name
+                            moms, name=name
                         ));
                     }
                 }}
@@ -251,7 +254,7 @@ impl Action {
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                         let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
                         write_all(&vars.parent, "dynamic_structure_factor.yaml", &format!("{}    {}:\n      DSF: [{}]\n      sigma_DSF: [{}]\n", if head { format!("{} - t: {:e}\n", &start, t) } else { "".into() }, strip(&vars.dvars[id].0),
-                        vtos(&moms[0]),vtos(&moms[1])
+                        vtos(&moms[0],enot),vtos(&moms[1],enot)
                         ));
                     } else {
                         let moms = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
@@ -279,20 +282,20 @@ impl Action {
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
                         let (moms,name) = match shape.unwrap_or(Shape::Radial) {
-                            Shape::All => (moms, "SF"),
-                            Shape::Radial => (moms.into_iter().map(|m| radial_mean(&m,&dim,&phy)).collect(),"radial_SF"),
+                            Shape::All => (moms.iter().map(|i| vtos(i,enot)).collect::<Vec<_>>(), "correlation"),
+                            Shape::Radial => (moms.into_iter().map(|m| vtos(&radial_mean(&m,&dim,&phy),renot)).collect::<Vec<_>>(),"cadial_Correlation"),
                         };
                     write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    {name}: [{}]\n    sigma_{name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    vtos(&moms[0]),vtos(&moms[1]), name=name
+                    &moms[0],&moms[1], name=name
                     ));
                 } else {
                     let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
                         let (moms,name) = match shape.unwrap_or(Shape::Radial) {
-                            Shape::All => (moms, "correlation"),
-                            Shape::Radial => (radial_mean(&moms,&dim,&phy),"radial_correlation"),
+                            Shape::All => (moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","), "correlation"),
+                            Shape::Radial => (radial_mean(&moms,&dim,&phy).iter().map(|i| format!("{:e};{:e}", i.pos, i.val)).collect::<Vec<_>>().join(","),"radial_correlation"),
                         };
                     write_all(&vars.parent, "correlation.yaml", &format!("{}  {}:\n    {name}: [{}]\n", if head { format!("- t: {:e}\n", t) } else { "".into() }, strip(&vars.dvars[id].0),
-                    moms.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(","), name=name
+                    moms, name=name
                     ));
                 }
                 }}
@@ -311,7 +314,7 @@ impl Action {
                     let res = h.get_firsts("sum",num as usize*len*w as usize)?.VF64();
                     let cumulants = moments_to_cumulants(&res,len*w as usize);//.chunks((num*w) as _).fold(vec![vec![];num as _], |mut acc,i| {i.chunks(w as _).enumerate().for_each(|(i,v)| acc[i].extend_from_slice(v)); acc});
                     let moms = cumulants.chunks(len*w as usize)
-                        .map(|c| c.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(" "))
+                        .map(|c| vtos(c,enot))
                         .collect::<Vec<String>>();
                     let mut data = String::new();
                     for (m,name) in moms.iter().zip((1..).map(|i| format!("<{}^{}>c",var_name,i))) {
@@ -322,7 +325,7 @@ impl Action {
                     let len = vars.len;
                     let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
                     write_all(&vars.parent, "raw.txt", &format!("{:e} {} {}\n", t, var_name,
-                            raw.iter().map(|i| format!("{:e}", i)).collect::<Vec<_>>().join(" ")
+                            vtos(&raw,enot)
                     ));
                 }
             }},
