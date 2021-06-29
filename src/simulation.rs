@@ -291,7 +291,15 @@ fn extract_symbols(
     let (dims, phy) = param.config.dim.into();
     let dim: Dim = dims.into();
     let global_dim = dim.len();
-    let dirs = param.config.dirs.clone();
+    //let dirs = param.config.dirs.clone(); // FIXME isn't the physical non zero direction that are the dirs to consider?
+    let dirs = phy.iter().enumerate().fold(vec![], |mut acc, (i, p)| {
+        if *p == 0.0 {
+            acc
+        } else {
+            acc.push(i.into());
+            acc
+        }
+    });
     let t_max = param.config.t_max;
 
     let mut sumdims = dims.clone();

@@ -17,9 +17,9 @@ pub enum Shape {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
     Moments(Vec<String>),
-    StaticStructureFactor(Vec<String>, Option<Shape>),
+    StaticStructureFactor(Vec<String>, Shape),
     DynamicStructureFactor(Vec<String>),
-    Correlation(Vec<String>, Option<Shape>),
+    Correlation(Vec<String>, Shape),
     RawData(Vec<String>),
     Window(Vec<String>), // buffers
 }
@@ -202,7 +202,7 @@ impl Action {
                     h.run_arg("ctimes", D1(len*w as usize), &[BufArg("tmp","src"),Param("c",phy.into()),BufArg("tmp","dst")])?;
                     let dim: [usize;3] = vars.dim.into();
                     let phy = vars.phy;
-                    match shape.unwrap_or(Shape::Radial) {
+                    match shape {
                         Shape::All => {
                             if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                                 let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
@@ -273,7 +273,7 @@ impl Action {
                     let dim: [usize;3] = vars.dim.into();
                     let phy = vars.phy;
 
-                    match shape.unwrap_or(Shape::Radial) {
+                    match shape {
                         Shape::All => {
                             if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                                 let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
@@ -338,6 +338,7 @@ impl Action {
 }
 
 pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
+    let nbsim = a.len();
     let len = a[0].len();
     let w = a[0][0].vals.len();
     let mut moms: Vec<Vec<Radial>> = vec![
@@ -351,13 +352,10 @@ pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
     ];
     for vs in a {
         for (i, v) in vs.iter().enumerate() {
-            let mut tmp = v.vals.clone();
-            for j in 0..w {
-                moms[0][i].vals[j] += tmp[j];
-            }
-            for p in 1..num {
+            let mut tmp = (0..w).map(|_| 1.0).collect::<Vec<_>>();
+            for p in 0..num {
                 for j in 0..w {
-                    tmp[j] *= tmp[j - 1];
+                    tmp[j] *= v.vals[j];
                     moms[p][i].vals[j] += tmp[j];
                 }
             }
@@ -365,8 +363,12 @@ pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
     }
     for i in 0..len {
         for j in 0..w {
-            let c =
-                moments_to_cumulants(&(0..num).map(|n| moms[n][i].vals[j]).collect::<Vec<_>>(), 1);
+            let c = moments_to_cumulants(
+                &(0..num)
+                    .map(|n| moms[n][i].vals[j] / nbsim as f64)
+                    .collect::<Vec<_>>(),
+                1,
+            );
             for n in 0..num {
                 moms[n][i].vals[j] = c[n];
             }

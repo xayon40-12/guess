@@ -1,6 +1,5 @@
 use crate::simulation::parameters::actions::Action;
 use crate::simulation::parameters::activations::Repetition;
-use gpgpu::DimDir;
 use serde::{Deserialize, Serialize};
 
 pub mod actions;
@@ -96,7 +95,7 @@ impl From<DimPhy> for ([usize; 3], [f64; 3]) {
 pub struct Config {
     pub t_max: f64,
     pub dim: DimPhy,
-    pub dirs: Vec<DimDir>,
+    //pub dirs: Vec<DimDir>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
