@@ -5,6 +5,7 @@ use gpgpu::descriptors::{
     SFunctionConstructor::*, SKernelConstructor, Types::*,
 };
 use gpgpu::functions::SFunction;
+use gpgpu::integrators::pde_ir::Indexable;
 use gpgpu::integrators::pde_parser::DPDE;
 use gpgpu::integrators::{
     create_euler_pde, create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam,
@@ -860,8 +861,12 @@ fn parse_symbols(
         let mut equations = vec![];
         for (j, l) in symbols.lines().enumerate() {
             macro_rules! parse {
-                ($src:ident) => {{
-                    let mut parsed = parse(&dpdes, lexer_idx, global_dim, &$src).expect(&format!(
+                ($src:ident, $current_var:expr) => {{
+                    let mut parsed = parse(&dpdes, &$current_var.and_then(|name: &String| hdpdes.get(name).and_then(|pde| Some(if pde.vec_dim>1 {
+                        Indexable::new_vector(pde.var_dim, global_dim, pde.vec_dim, name, &pde.boundary)
+                    } else {
+                        Indexable::new_scalar(pde.var_dim, global_dim, name, &pde.boundary)
+                    }))), lexer_idx, global_dim, &$src).expect(&format!(
                         "Parse error in sub-process {} line {}:\n|------------\n{}\n|------------\n",
                         i,
                         j + 1,
@@ -877,7 +882,7 @@ fn parse_symbols(
                 let name = caps[1].into();
                 let mut src = replace(&caps[3], &consts);
                 if &caps[2] != ":" {
-                    let mut res = parse!(src);
+                    let mut res = parse!(src, None);
                     if res.len() == 1 {
                         src = res.pop().unwrap();
                     } else {
@@ -904,7 +909,7 @@ fn parse_symbols(
                     .collect();
                 let mut src = replace(&caps[4], &consts);
                 if &caps[3] != ":" {
-                    let mut res = parse!(src);
+                    let mut res = parse!(src, None);
                     if res.len() == 1 {
                         src = res.pop().unwrap();
                     } else {
@@ -939,7 +944,7 @@ fn parse_symbols(
                         vec![src]
                     }
                 } else {
-                    parse!(src)
+                    parse!(src, Some(&dvar))
                 };
                 pdes.push(SPDE { dvar, expr });
                 found = true;
@@ -959,7 +964,7 @@ fn parse_symbols(
                                 vec![src]
                             }
                         } else {
-                            parse!(src)
+                            parse!(src, Some(&name))
                         };
                         $arr.push(EqDescriptor { name, expr });
                         found = true;
