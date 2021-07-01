@@ -1,3 +1,5 @@
+.DS_Store
+._*
 target/
 **/*.rs.bk
 param/*/
