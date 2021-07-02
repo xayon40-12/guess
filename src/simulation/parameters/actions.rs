@@ -1,10 +1,9 @@
 use crate::simulation::Vars;
-use gpgpu::algorithms::{
-    moments_to_cumulants, AlgorithmParam::*, MomentsParam, ReduceParam, Window,
-};
+use gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
 use gpgpu::descriptors::KernelArg::*;
 use gpgpu::kernels::{radial, Radial};
 use gpgpu::{Dim::*, DimDir::*};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -128,34 +127,27 @@ impl Action {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let dim: [usize; 3] = vars.dim.into();
-                    let dxs = dim.iter().zip(vars.phy.iter()).fold(1.0, |a,i| if *i.1 > 0.0 { a*i.1/(*i.0) as f64 } else { a });
-                    let mdim = dim.iter().zip(vars.phy.iter()).fold(0, |a,(&i,&p)| if (i < a || a == 0) && i > 0 && p > 0.0 { i } else { a });
-                    let windows: Vec<(Vec<Window>,usize)> = (0..mdim).map(|len| {
-                        let len = len + 1;
-                        let wins: Vec<Window> = vars.dirs.iter().enumerate().map(|(i,d)| {
-                            Window{ offset: 0, len: if i == 0 { len } else { dim[usize::from(d)] }}
-                        }).collect();
-                        (wins,len)
-                    }).collect();
-                    let num = 4;
-                    for (window,app) in windows {
-                        let prm = ReduceParam{ vect_dim: w, dst_size: None, window: Some(window) };
-                        h.run_algorithm("sum", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum"], Ref(&prm))?;
-                        let mut dim: [usize;3] = vars.dim.into();
-                        vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
-                        let len = dim.iter().fold(1, |a,i| a*i);
-                        h.run_arg("ctimes", D1(len*w as usize), &[BufArg("sum","src"),Param("c",dxs.into()),BufArg("sum","dst")])?;
-                        if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                            let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
-                            h.run_algorithm("moments", D1(len), &[X], &["sum","tmp2","tmp","summoments"], Ref(&prm))?;
-                            let moments = h.get_firsts("summoments",num*w as usize)?.VF64();
-                            let cumulants = moments_to_cumulants(&moments, w as _);
-                            write_all(&vars.parent, "windows.txt", &format!("{:e}|{}|moments_{}|{}\n", t, var_name, app, vvtos(&moments, w as usize,venot)));
-                            write_all(&vars.parent, "windows.txt", &format!("{:e}|{}|cumulants_{}|{}\n", t, var_name, app, vvtos(&cumulants, w as usize,venot)));
-                        } else {
-                            let win = h.get_firsts("sum",w as _)?.VF64();
-                            write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, app, vvtos(&win, w as usize,venot)));
+                    let phy: [f64; 3] = vars.phy;
+                    let raw = h.get(&vars.dvars[id].0)?.VF64();
+                    let mut rad = radial(&raw, w as usize, &dim, &phy, false);
+                    let vl = rad[0][0].vals.len();
+                    rad.par_iter_mut().for_each(|r|
+                        for i in 1..r.len() {
+                            for j in 0..vl {
+                                r[i].vals[j] += r[i-1].vals[j];
+                            }
                         }
+                    );
+                    let n = 4; //number of cumulants
+                    if rad.len() > 1 {
+                        let rad = cumulants(rad,n);
+                        let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),format!("radial_{}", var_name));
+                        for (i,mom) in moms.iter().enumerate() {
+                            write_all(&vars.parent, "window.txt", &format!("{:e}|{}|$<(\\int_{{sv}}{})^{{{n}}}>_c$|{}\n", t, var_name, name, &mom, n=(i+1)));
+                        }
+                    } else {
+                        let (moms,name) = (vtos(&rad[0],renot), format!("radial_{}", var_name));
+                        write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
                     }
                 }}
             }
