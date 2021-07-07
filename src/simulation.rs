@@ -484,7 +484,7 @@ fn extract_symbols(
                 let mut others = dvars
                     .iter()
                     .filter(|i| i.0 != name)
-                    .map(|i| (i.0.clone(), format!("dvar_{}", &i.0)))
+                    .map(|i| (format!("dvar_{}", &i.0), i.0.clone()))
                     .collect::<Vec<_>>();
                 others.append(
                     &mut noises_names
