@@ -47,6 +47,7 @@ pub struct EquationKernel {
 }
 
 pub struct Vars {
+    pub t_0: f64,
     pub t_max: f64,
     pub dim: Dim,
     pub phy: [f64; 3],
@@ -182,6 +183,7 @@ impl Simulation {
 
     pub fn run(&mut self) -> gpgpu::Result<()> {
         let Vars {
+            t_0,
             t_max,
             dim,
             dirs: _,
@@ -196,7 +198,7 @@ impl Simulation {
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
 
         let mut intprm = IntegratorParam {
-            t: 0.0,
+            t: t_0,
             increment_name: "t".to_string(),
             args: vec![],
         };
@@ -300,6 +302,7 @@ fn extract_symbols(
             acc
         }
     });
+    let t_0 = param.config.t_0.unwrap_or(0.0);
     let t_max = param.config.t_max;
 
     let mut sumdims = dims.clone();
@@ -329,6 +332,7 @@ fn extract_symbols(
     h = h.load_kernel("cminus");
     h = h.load_kernel("vcminus");
     h = h.load_kernel("moments_to_cumulants");
+    h = h.load_function("ifNaNInf");
 
     let mut consts = HashMap::new();
     let mut dxyz = 1.0;
@@ -678,6 +682,7 @@ fn extract_symbols(
         .collect::<Vec<_>>();
 
     let vars = Vars {
+        t_0,
         t_max,
         dim,
         dirs,

@@ -94,6 +94,7 @@ impl From<DimPhy> for ([usize; 3], [f64; 3]) {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {
     pub t_max: f64,
+    pub t_0: Option<f64>,
     pub dim: DimPhy,
     //pub dirs: Vec<DimDir>,
 }
