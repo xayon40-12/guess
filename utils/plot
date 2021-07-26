@@ -86,4 +86,4 @@ def animate(i):
 ani = animation.FuncAnimation(fig, animate, init_func=init, frames=n, blit=True, interval=16, repeat=True)
 
 #plt.show()
-ani.save("{}.gif".format(argv[1]))
+ani.save("{}_{}.gif".format(argv[2],argv[3]))
