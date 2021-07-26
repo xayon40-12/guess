@@ -1,1 +1,2 @@
-# Ultimate Simulation of Hydrodynamics with Fluctuations
+# General User-oriented Effortless Stochastic Solver
+

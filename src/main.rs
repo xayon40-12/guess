@@ -1,10 +1,10 @@
 use clap::{App, Arg, SubCommand};
+use guess::*;
 use regex::Regex;
 use simulation::NumType::*;
-use ushf_run::*;
 
 fn main() -> gpgpu::Result<()> {
-    let matches = App::new("ushf")
+    let matches = App::new("guess")
                           .version("0.1")
                           .author("Nathan Touroux <touroux.nathan@gmail.com>")
                           .about("PDE simulation")
@@ -21,7 +21,7 @@ fn main() -> gpgpu::Result<()> {
                                   .required(true)))
                           .get_matches();
 
-    let var = "USHF_RUN";
+    let var = "GUESS_RUN";
     let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(\d*)(=?)(\d+))?").unwrap();
     let extract = |param: &str| {
         let caps = rarg.captures(param).expect("Input args should be in the form \"file_name:number\" where \":number\" is optional (\"file_name\" may contains \":\").");
