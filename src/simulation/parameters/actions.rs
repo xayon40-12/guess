@@ -274,7 +274,7 @@ impl Action {
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
-                                let (moms,name) = (vvtos(&moms,w as usize,venot),"SF");
+                                let (moms,name) = (vvtos(&moms,w as usize,venot),"correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
                             }
                         },
@@ -287,7 +287,7 @@ impl Action {
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
-                                let (moms,name) = (vtos(&rad[0],renot), "radial_SF");
+                                let (moms,name) = (vtos(&rad[0],renot), "radial_correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
                             }
                         },
