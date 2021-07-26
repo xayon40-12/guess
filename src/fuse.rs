@@ -1,26 +1,37 @@
+use rayon::prelude::*;
 use regex::Regex;
+use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
-use std::fs::File;
 use std::io::Write;
-use rayon::prelude::*;
 
 fn folders(name: &str) -> Vec<String> {
-    let re = Regex::new(&format!(r"^{}\d+$",name)).unwrap();
-    std::fs::read_dir(".").expect("Could not enumerate folders in current dir.")
-        .filter_map(|d| d.ok().and_then(|e| 
+    let re = Regex::new(&format!(r"^{}\d+$", name)).unwrap();
+    std::fs::read_dir(".")
+        .expect("Could not enumerate folders in current dir.")
+        .filter_map(|d| {
+            d.ok().and_then(|e| {
                 if let Some(true) = e.file_type().ok().and_then(|t| Some(t.is_dir())) {
                     e.file_name().into_string().ok()
-                } else { None }))
+                } else {
+                    None
+                }
+            })
+        })
         .filter(|f| re.is_match(&f))
         .collect::<Vec<_>>()
 }
 
 fn files(dir: &str) -> Vec<String> {
-    std::fs::read_dir(dir).expect(&format!("Could not enumerate folders in dir \"{}\".", dir))
-        .map(|d| d.expect("Error reading direcory.")
-                  .file_name().into_string().expect("Error converting file name.")
-        ).filter(|d| d != "config")
+    std::fs::read_dir(dir)
+        .expect(&format!("Could not enumerate folders in dir \"{}\".", dir))
+        .map(|d| {
+            d.expect("Error reading direcory.")
+                .file_name()
+                .into_string()
+                .expect("Error converting file name.")
+        })
+        .filter(|d| d != "config")
         .map(|d| format!("{}/{}", dir, d))
         .collect::<Vec<_>>()
 }
@@ -29,17 +40,33 @@ fn files(dir: &str) -> Vec<String> {
 struct Data {
     param: String,
     src_observable: Vec<Vec<BufReader<File>>>,
-    dst_observable: Vec<(String,File)>,
+    dst_observable: Vec<(String, File)>,
     fuse_file: File,
 }
 
 impl Data {
-    pub fn new(param: String, src_observable: Vec<Vec<BufReader<File>>>, dst_observable: Vec<(String,File)>, fuse_file: File) -> Data {
-        Data{ param, src_observable, dst_observable, fuse_file }
+    pub fn new(
+        param: String,
+        src_observable: Vec<Vec<BufReader<File>>>,
+        dst_observable: Vec<(String, File)>,
+        fuse_file: File,
+    ) -> Data {
+        Data {
+            param,
+            src_observable,
+            dst_observable,
+            fuse_file,
+        }
     }
 
     pub fn doit(mut self) {
-        let fuse = self.dst_observable.iter().zip(self.src_observable.iter()).map(|((name,_),src)| format!("{}: {}", name, src.len())).collect::<Vec<_>>().join("\n");
+        let fuse = self
+            .dst_observable
+            .iter()
+            .zip(self.src_observable.iter())
+            .map(|((name, _), src)| format!("{}: {}", name, src.len()))
+            .collect::<Vec<_>>()
+            .join("\n");
         write!(self.fuse_file, "{}", fuse).unwrap();
         self.dst_observable.into_par_iter().zip(self.src_observable.into_par_iter()).for_each(|((dstname,mut dst),mut src)| {
             let mut id = 0;
@@ -127,68 +154,98 @@ impl Data {
 }
 
 fn write_array(dst: &mut File, start: &str, arr: &Vec<f64>) {
-    write!(dst, "{}: [{}]\n", start, arr.iter().map(|i| format!("{:e}",i)).collect::<Vec<_>>().join(",")).unwrap();
+    write!(
+        dst,
+        "{}: [{}]\n",
+        start,
+        arr.iter()
+            .map(|i| format!("{:e}", i))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+    .unwrap();
 }
 
 fn open_files(name: &str) -> Data {
     let folders = folders(name);
     let mut param = None;
     let mut names = None;
-    let src_observable = folders.iter().map(|f| {
-        let tmpparam = std::fs::read_to_string(&format!("{}/config/param.yaml",f))
-            .expect("Could not read config.yaml");
-        if let Some(param) = &param {
-            if param != &tmpparam {
-                panic!("The content of the param.yaml files are different, abort!");
+    let src_observable = folders
+        .iter()
+        .map(|f| {
+            let tmpparam = std::fs::read_to_string(&format!("{}/config/param.yaml", f))
+                .expect("Could not read config.yaml");
+            if let Some(param) = &param {
+                if param != &tmpparam {
+                    panic!("The content of the param.yaml files are different, abort!");
+                }
+            } else {
+                param = Some(tmpparam);
             }
-        } else {
-            param = Some(tmpparam);
-        }
-        let mut tmpnames = vec![];
-        let observable = files(f)
-            .into_iter()
-            .map(|f| {
-                tmpnames.push(f[f.rfind("/").unwrap()+1..].to_string());
-                BufReader::new(File::open(&f).expect(&format!("Could not open file \"{}\"",f)))
-            })
-            .collect::<Vec<_>>();
-        if let Some(names) = &names {
-            if names != &tmpnames {
-                panic!("The obsarvable have not the same names in each folder, abort!");
+            let mut tmpnames = vec![];
+            let observable = files(f)
+                .into_iter()
+                .map(|f| {
+                    tmpnames.push(f[f.rfind("/").unwrap() + 1..].to_string());
+                    BufReader::new(File::open(&f).expect(&format!("Could not open file \"{}\"", f)))
+                })
+                .collect::<Vec<_>>();
+            if let Some(names) = &names {
+                if names != &tmpnames {
+                    panic!("The obsarvable have not the same names in each folder, abort!");
+                }
+            } else {
+                names = Some(tmpnames);
             }
-        } else {
-            names = Some(tmpnames);
-        }
 
-        observable
-    }).collect::<Vec<_>>();
+            observable
+        })
+        .collect::<Vec<_>>();
     let param = param.expect("No param.yaml found.");
     let names = names.expect("No observable found.");
     let mut itr = src_observable.into_iter();
-    let mut src_observable = itr.next().unwrap().into_iter().map(|i| vec![i]).collect::<Vec<_>>();
+    let mut src_observable = itr
+        .next()
+        .unwrap()
+        .into_iter()
+        .map(|i| vec![i])
+        .collect::<Vec<_>>();
     for it in itr {
-        it.into_iter().enumerate().for_each(|(i,v)| src_observable[i].push(v));
+        it.into_iter()
+            .enumerate()
+            .for_each(|(i, v)| src_observable[i].push(v));
     }
 
-    let targetstr = format!("{}_fuse",name);
-    let configstr = format!("{}/config",targetstr);
+    let targetstr = format!("{}_fuse", name);
+    let configstr = format!("{}/config", targetstr);
     let target = std::path::Path::new(&configstr);
-    std::fs::create_dir_all(&target).expect(&format!("Could not create destination directory \"{:?}\"", &target));
-    let dst_observable = names.into_iter()
-        .map(|n| (n.clone(),File::create(&format!("{}/{}", &targetstr, n)).expect("Could not create destination file observable.")))
+    std::fs::create_dir_all(&target).expect(&format!(
+        "Could not create destination directory \"{:?}\"",
+        &target
+    ));
+    let dst_observable = names
+        .into_iter()
+        .map(|n| {
+            (
+                n.clone(),
+                File::create(&format!("{}/{}", &targetstr, n))
+                    .expect("Could not create destination file observable."),
+            )
+        })
         .collect::<Vec<_>>();
 
-    let fuse_file = File::create(&format!("{}/fuse.yaml", &configstr)).expect("Could not create destination file fuse.");
-    let mut param_file = File::create(&format!("{}/param.yaml", &configstr)).expect("Could not create destination file param.");
+    let fuse_file = File::create(&format!("{}/fuse.yaml", &configstr))
+        .expect("Could not create destination file fuse.");
+    let mut param_file = File::create(&format!("{}/param.yaml", &configstr))
+        .expect("Could not create destination file param.");
     write!(param_file, "{}", param).unwrap();
 
     Data::new(param, src_observable, dst_observable, fuse_file)
 }
 
-fn main() {
-    let args = std::env::args().collect::<Vec<_>>();
+fn fuse(args: Vec<String>) {
     if args.len() != 2 {
-        panic!("There must be one argument to ushf_fuse which is the name of the simulations to fuse (without the number.")
+        panic!("There must be one argument to guess_fuse which is the name of the simulations to fuse (without the number.")
     } else {
         let name = &args[1];
         let data = open_files(name);
