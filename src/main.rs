@@ -1,3 +1,4 @@
+use crate::fuse::fuse;
 use clap::{App, Arg, SubCommand};
 use guess::*;
 use regex::Regex;
@@ -19,10 +20,16 @@ fn main() -> gpgpu::Result<()> {
                               .arg(Arg::with_name("INPUT")
                                   .help("Sets the parameter file to use")
                                   .required(true)))
+                          .subcommand(SubCommand::with_name("fuse")
+                              .about("fuse the results from the simulations named INPUT_<num> (where <num> might be any number).")
+                              .arg(Arg::with_name("INPUT")
+                                  .help("Sets the simulations folde name to use")
+                                  .required(true)))
+
                           .get_matches();
 
     let var = "GUESS_RUN";
-    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(\d*)(=?)(\d+))?").unwrap();
+    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(\d+)?(=)?(\d+))?").unwrap();
     let extract = |param: &str| {
         let caps = rarg.captures(param).expect("Input args should be in the form \"file_name:number\" where \":number\" is optional (\"file_name\" may contains \":\").");
         let param: String = caps[1].into();
@@ -71,6 +78,8 @@ fn main() -> gpgpu::Result<()> {
         run_sim(run.values_of("INPUT").unwrap().map(|i| i.into()).collect())?;
     } else if let Some(check) = matches.subcommand_matches("check") {
         Simulation::from_param(&check.value_of("INPUT").unwrap(), NoNum, true)?;
+    } else if let Some(fuseargs) = matches.subcommand_matches("fuse") {
+        fuse(vec![fuseargs.value_of("INPUT").unwrap().to_string()]);
     } else {
         let params = std::env::var(var).expect(&format!("The environment variable \"{}\" must be set as subcommand \"run\" would be set when no subcommands are given.", var));
         run_sim(params.split(" ").collect::<Vec<_>>())?;

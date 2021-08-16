@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::Write;
+use std::ops::Add;
 
 fn folders(name: &str) -> Vec<String> {
     let re = Regex::new(&format!(r"^{}\d+$", name)).unwrap();
@@ -44,6 +45,224 @@ struct Data {
     fuse_file: File,
 }
 
+type ValueT = Vec<f64>;
+
+#[derive(Debug, Clone)]
+enum ArrayT {
+    Values(ValueT),
+    WithCoord(f64, ValueT),
+}
+
+impl Add<ArrayT> for ArrayT {
+    type Output = ArrayT;
+    fn add(self, rhs: ArrayT) -> Self::Output {
+        match (self, rhs) {
+            (ArrayT::Values(v1), ArrayT::Values(v2)) => {
+                if v1.len() != v2.len() {
+                    panic!("The lenght of arrays inside ArrayT must be of same lenght when added.")
+                }
+                ArrayT::Values(v1.iter().zip(v2.iter()).map(|(i1, i2)| i1 + i2).collect())
+            }
+            (ArrayT::WithCoord(c1, v1), ArrayT::WithCoord(c2, v2)) => {
+                if c1 != c2 {
+                    panic!("Coordinates must be the same when adding WithCoord variant of ArrayT.")
+                }
+                if v1.len() != v2.len() {
+                    panic!("The lenght of arrays inside ArrayT must be of same lenght when added.")
+                }
+                ArrayT::WithCoord(
+                    c1,
+                    v1.iter().zip(v2.iter()).map(|(i1, i2)| i1 + i2).collect(),
+                )
+            }
+            _ => panic!("ArrayT can be added only if they are of the same variant."),
+        }
+    }
+}
+
+impl ArrayT {
+    fn to_string(&self) -> String {
+        match self {
+            ArrayT::Values(v) => v
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            ArrayT::WithCoord(c, v) => format!(
+                "{};{}",
+                c.to_string(),
+                v.iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        }
+    }
+    fn power(self, n: usize) -> ArrayT {
+        match self {
+            ArrayT::Values(v) => {
+                ArrayT::Values(v.into_iter().map(|i| f64::powf(i, n as f64)).collect())
+            }
+            ArrayT::WithCoord(c, v) => {
+                ArrayT::WithCoord(c, v.into_iter().map(|i| f64::powf(i, n as f64)).collect())
+            }
+        }
+    }
+    fn divide(self, n: usize) -> ArrayT {
+        match self {
+            ArrayT::Values(v) => ArrayT::Values(v.into_iter().map(|i| i / n as f64).collect()),
+            ArrayT::WithCoord(c, v) => {
+                ArrayT::WithCoord(c, v.into_iter().map(|i| i / n as f64).collect())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Line {
+    time: f64,
+    field: String,
+    observable: String,
+    array: Vec<ArrayT>,
+}
+
+#[derive(Debug, Clone)]
+struct FuseLine {
+    time: f64,
+    field: String,
+    observable: String,
+    array: (usize, Vec<Vec<ArrayT>>),
+}
+
+impl From<String> for Line {
+    fn from(source: String) -> Self {
+        let vals = source.trim().split("|").collect::<Vec<_>>();
+        if vals.len() != 4 {
+            panic!("A data line should be of the form:\ntime|field|observable|pos;c1,c2 pos;c1,c2 ...\nWhere pos is a number that might no be present (then the ';' would not be present either) and c1 c2 ... are the values (there might be many separated by comas, for instance a complex number would have two).")
+        }
+        Line {
+            time: vals[0].parse::<f64>().expect(&format!(
+                "Time cannot be parsed while reading line:\n{}",
+                source
+            )),
+            field: vals[1].to_string(),
+            observable: vals[2].to_string(),
+            array: vals[3]
+                .split(" ")
+                .map(|v| {
+                    let tmp = v.split(";").collect::<Vec<_>>();
+                    match tmp.len() {
+                        1 => ArrayT::Values(
+                            tmp[0]
+                                .split(",")
+                                .map(|i| {
+                                    i.parse::<f64>().expect(&format!(
+                                        "Cannot parse \"{}\" as a number in: \"{}\"",
+                                        i, v
+                                    ))
+                                })
+                                .collect(),
+                        ),
+                        2 => ArrayT::WithCoord(
+                            tmp[0].parse::<f64>().expect(&format!(
+                                "Cannot parse \"{}\" as a number in: \"{}\"",
+                                tmp[0], v
+                            )),
+                            tmp[1]
+                                .split(",")
+                                .map(|i| {
+                                    i.parse::<f64>().expect(&format!(
+                                        "Cannot parse \"{}\" as a number in: \"{}\"",
+                                        i, v
+                                    ))
+                                })
+                                .collect(),
+                        ),
+                        _ => panic!(
+                            "There should be at most one ';' when parsing values: \"{}\"",
+                            v
+                        ),
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+impl FuseLine {
+    fn to_fuse(source: Line, n: usize) -> Self {
+        let array = source.array;
+        Self {
+            time: source.time,
+            field: source.field,
+            observable: source.observable,
+            array: (
+                1,
+                (0..n)
+                    .map(|i| array.clone().into_iter().map(|a| a.power(i + 1)).collect())
+                    .collect(),
+            ),
+        }
+    }
+    fn similar(&self, other: &FuseLine) -> bool {
+        self.time == other.time
+            && self.field == other.field
+            && self.observable == other.observable
+            && self.array.1.len() == other.array.1.len()
+    }
+    fn to_string(&self) -> String {
+        let n = self.array.0;
+        self.array
+            .1
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                format!(
+                    "{}|{}|{}|{}",
+                    self.time.to_string(),
+                    self.field,
+                    format!("<({})^{}>", self.observable, i + 1),
+                    a.clone()
+                        .into_iter()
+                        .map(|v| v.divide(n).to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    }
+}
+
+impl Add<FuseLine> for FuseLine {
+    type Output = FuseLine;
+    fn add(self, rhs: FuseLine) -> Self::Output {
+        if !self.similar(&rhs) {
+            panic!("Only similar FuseLine can be added.")
+        }
+        FuseLine {
+            time: self.time,
+            field: self.field,
+            observable: self.observable,
+            array: (
+                self.array.0 + rhs.array.0,
+                self.array
+                    .1
+                    .into_iter()
+                    .zip(rhs.array.1.into_iter())
+                    .map(|(c1, c2)| {
+                        c1.into_iter()
+                            .zip(c2.into_iter())
+                            .map(|(a1, a2)| a1 + a2)
+                            .collect()
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
 impl Data {
     pub fn new(
         param: String,
@@ -64,106 +283,47 @@ impl Data {
             .dst_observable
             .iter()
             .zip(self.src_observable.iter())
-            .map(|((name, _), src)| format!("{}: {}", name, src.len()))
+            .map(|((name, _), src)| format!("  \"{}\": {},", name, src.len()))
             .collect::<Vec<_>>()
             .join("\n");
-        write!(self.fuse_file, "{}", fuse).unwrap();
-        self.dst_observable.into_par_iter().zip(self.src_observable.into_par_iter()).for_each(|((dstname,mut dst),mut src)| {
-            let mut id = 0;
-            let mut last: Option<(String,Vec<f64>,Vec<f64>)> = None;
-            let mut line = String::new();
-            let num = src.len();
-            let mut is_sigma;
-            'top: loop {
-                id += 1;
-                let mut mean: Option<(Vec<f64>,Vec<f64>)> = None;
-                let mut start: Option<String> = None;
-                is_sigma = false;
-                for s in &mut src {
-                    line = String::new();
-                    s.read_line(&mut line).unwrap();
-                    if line.len() == 0 { break 'top; }
-                    let l = line.split(":").collect::<Vec<_>>();
-                    if let Some(start) = &start {
-                        if start != &l[0] { panic!("Lines {} does not correspond in observable \"{}\".", id, &dstname); }
-                    } else {
-                        start = Some(l[0].to_string());
-                        is_sigma = l[0][l[0].rfind(" ").unwrap()+1..].starts_with("sigma_");
-                    }
-                    if l[1].starts_with(" [") {
-                        let vec = l[1][2..l[1].rfind("]").unwrap()]
-                            .split(",")
-                            .map(|i| i.parse::<f64>().unwrap())
-                            .collect::<Vec<_>>();
-                        let sig = vec.iter().map(|i| i*i).collect::<Vec<_>>();
-                        if is_sigma {
-                            if let Some((mean,_)) = &mut mean {
-                                let m = last.clone().expect(&format!("There must be an observable befor its sigma_ line {} in \"{}\".", id, &dstname)).2;
-                                for i in 0..vec.len() {
-                                    mean[i] += sig[i]+m[i]*m[i];
-                                }
-                            } else {
-                                mean = Some((sig,vec![]));
+        write!(self.fuse_file, "{{\n{}}}", fuse).unwrap();
+        self.dst_observable
+            .into_par_iter()
+            .zip(self.src_observable.into_par_iter())
+            .for_each(|((dstname, mut dst), mut src)| {
+                let mut id = 0;
+                let n = 4;
+                'top: loop {
+                    id += 1;
+                    let mut acc: Option<FuseLine> = None;
+                    for s in &mut src {
+                        let mut line = String::new();
+                        s.read_line(&mut line).unwrap();
+                        if line.len() == 0 {
+                            break 'top;
+                        }
+                        let l = FuseLine::to_fuse(Line::from(line), n);
+                        if let Some(acc1) = acc {
+                            if !acc1.similar(&l) {
+                                panic!(
+                                    "Lines {} does not correspond in observable \"{}\".",
+                                    id, &dstname
+                                );
                             }
+                            acc = Some(acc1 + l);
                         } else {
-                            if let Some((mean,sigma)) = &mut mean {
-                                for i in 0..vec.len() {
-                                    mean[i] += vec[i];
-                                    sigma[i] += sig[i];
-                                }
-                            } else {
-                                mean = Some((vec,sig));
-                            }
+                            acc = Some(l);
                         }
                     }
-                }
-                let start = start.unwrap();
-                if is_sigma {
-                    if let Some((mut sig,_)) = mean {
-                        let m = last.unwrap().2;
-                        for i in 0..sig.len() { sig[i] = (sig[i]/num as f64-m[i]*m[i]).sqrt(); }
-                        write_array(&mut dst,&start,&sig);
-                    }
-                    last = None;
-                } else {
-                    if let Some(last) = &last {
-                        write_array(&mut dst,&last.0,&last.1);
-                    }
-                    last = None;
-                    if let Some((mut mean,mut sigma)) = mean {
-                        let pos = start.rfind(" ").unwrap();
-                        let sigstart = format!("{}sigma_{}", &start[0..pos+1], &start[pos+1..]);
-                        for i in 0..mean.len() { mean[i] /= num as f64; }
-                        for i in 0..sigma.len() { sigma[i] = (sigma[i]/num as f64-mean[i]*mean[i]).sqrt(); }
-                        write_array(&mut dst,&start,&mean);
-                        last = Some((sigstart, sigma, mean));
-                    } else {
-                        write!(dst, "{}", line).unwrap();
-                    }
-                }
 
-            }
-
-            if !is_sigma {
-                if let Some(last) = &last {
-                    write_array(&mut dst,&last.0,&last.1);
+                    write_array(&mut dst, acc.unwrap());
                 }
-            }
-        });
+            });
     }
 }
 
-fn write_array(dst: &mut File, start: &str, arr: &Vec<f64>) {
-    write!(
-        dst,
-        "{}: [{}]\n",
-        start,
-        arr.iter()
-            .map(|i| format!("{:e}", i))
-            .collect::<Vec<_>>()
-            .join(",")
-    )
-    .unwrap();
+fn write_array(dst: &mut File, line: FuseLine) {
+    write!(dst, "{}", line.to_string()).unwrap();
 }
 
 fn open_files(name: &str) -> Data {
@@ -173,11 +333,11 @@ fn open_files(name: &str) -> Data {
     let src_observable = folders
         .iter()
         .map(|f| {
-            let tmpparam = std::fs::read_to_string(&format!("{}/config/param.yaml", f))
-                .expect("Could not read config.yaml");
+            let tmpparam = std::fs::read_to_string(&format!("{}/config/param.ron", f))
+                .expect("Could not read config/param.ron");
             if let Some(param) = &param {
                 if param != &tmpparam {
-                    panic!("The content of the param.yaml files are different, abort!");
+                    panic!("The content of the param.ron files are different, abort!");
                 }
             } else {
                 param = Some(tmpparam);
@@ -201,7 +361,7 @@ fn open_files(name: &str) -> Data {
             observable
         })
         .collect::<Vec<_>>();
-    let param = param.expect("No param.yaml found.");
+    let param = param.expect("No param.ron found.");
     let names = names.expect("No observable found.");
     let mut itr = src_observable.into_iter();
     let mut src_observable = itr
@@ -234,20 +394,20 @@ fn open_files(name: &str) -> Data {
         })
         .collect::<Vec<_>>();
 
-    let fuse_file = File::create(&format!("{}/fuse.yaml", &configstr))
+    let fuse_file = File::create(&format!("{}/fuse.ron", &configstr))
         .expect("Could not create destination file fuse.");
-    let mut param_file = File::create(&format!("{}/param.yaml", &configstr))
+    let mut param_file = File::create(&format!("{}/param.ron", &configstr))
         .expect("Could not create destination file param.");
     write!(param_file, "{}", param).unwrap();
 
     Data::new(param, src_observable, dst_observable, fuse_file)
 }
 
-fn fuse(args: Vec<String>) {
-    if args.len() != 2 {
+pub fn fuse(args: Vec<String>) {
+    if args.len() != 1 {
         panic!("There must be one argument to guess_fuse which is the name of the simulations to fuse (without the number.")
     } else {
-        let name = &args[1];
+        let name = &args[0];
         let data = open_files(name);
         data.doit();
     }
