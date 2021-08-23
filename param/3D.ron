@@ -1,0 +1,15 @@
+Param(
+  actions: [
+    (Moments(["nb"]), TotalInterval(from: 0, to: 3, total: 1000)),
+    //(Window(["nb"]), TotalInterval(from: 0, to: 3, total: 100)),
+    //(Correlation(["nb"],Radial), At(3)),
+  ],
+  config: (t_0: Some(0), t_max: 3, dim: D3S((32,10))),
+  integrator: RK4(dt: 1e-3),
+  noises: Some([Normal(name: "xi", dim: Some(3))]),
+  symbols: [
+    "nc = 0.333333
+    nb' = 1 + #^2nb + # xi 
+    *nb = nc",
+  ],
+)
