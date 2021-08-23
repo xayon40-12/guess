@@ -166,19 +166,19 @@ impl Action {
                     h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;// WARNING use "moments" twice because num=2, if num>2 a tmp buffer is needed
                     h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
                     let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
-                    let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
+                    //let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
                     let moms = res.chunks(num*w as usize)
                         .map(|c| vvtos(c,w as usize,venot))
                         .collect::<Vec<String>>();
                     write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}\n", t, var_name,&moms[0]));
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
+                    //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
+                    //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
 
                 } else {
                     let moments = h.get_firsts("moments",num*w as usize)?.VF64();
-                    let cumulants = moments_to_cumulants(&moments, w as _);
+                    //let cumulants = moments_to_cumulants(&moments, w as _);
                     write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}\n", t, var_name,vvtos(&moments,w as usize,venot)));
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vvtos(&cumulants,w as usize,venot)));
+                    //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vvtos(&cumulants,w as usize,venot)));
                 }
             }},
             StaticStructureFactor(names, shape) => {
