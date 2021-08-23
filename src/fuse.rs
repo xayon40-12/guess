@@ -1,13 +1,25 @@
 use rayon::prelude::*;
-use regex::Regex;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::Write;
 use std::ops::Add;
 
+fn check(name: &str, val: &str) -> bool {
+    let mut i = 0;
+    let name = name.chars().collect::<Vec<_>>();
+    let val = val.chars().collect::<Vec<_>>();
+    let l = name.len();
+    while i < l && name[i] == val[i] {
+        i += 1;
+    }
+    let l = val.len();
+    while i < l && val[i].is_digit(10) {
+        i += 1;
+    }
+    i == l
+}
 fn folders(name: &str) -> Vec<String> {
-    let re = Regex::new(&format!(r"^{}\d+$", name)).unwrap();
     std::fs::read_dir(".")
         .expect("Could not enumerate folders in current dir.")
         .filter_map(|d| {
@@ -19,7 +31,7 @@ fn folders(name: &str) -> Vec<String> {
                 }
             })
         })
-        .filter(|f| re.is_match(&f))
+        .filter(|f| check(name, f))
         .collect::<Vec<_>>()
 }
 
