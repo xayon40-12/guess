@@ -233,7 +233,7 @@ impl FuseLine {
                     "{}|{}|{}|{}",
                     self.time.to_string(),
                     self.field,
-                    format!("<({})^{}>", self.observable, i + 1),
+                    if i == 0 { format!("<{}>", self.observable) } else { format!("<({})^{}>", self.observable, i + 1) },
                     a.clone()
                         .into_iter()
                         .map(|v| v.divide(n).to_string())
@@ -304,7 +304,7 @@ impl Data {
             .zip(self.src_observable.into_par_iter())
             .for_each(|((dstname, mut dst), mut src)| {
                 let mut id = 0;
-                let n = 4;
+                let n = 1; // defaults to 1 for now
                 'top: loop {
                     id += 1;
                     let mut acc: Option<FuseLine> = None;
