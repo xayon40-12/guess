@@ -5,7 +5,7 @@ Param(
     //(Window(["nb"]), TotalInterval(from: 0, to: 3, total: 100)),
     //(Correlation(["nb"],Radial), At(3)),
   ],
-  config: (t_0: 0, t_max: 3, dim: D2((32,10),(1000,0))),
+  config: (t_0: Some(0), t_max: 3, dim: D2((32,10),(1000,0))),
   integrator: RK4(dt: 1e-3),
   noises: Some([Normal(name: "xi")]),
   //fields: [(name: "nb", boundary: "periodic")],
