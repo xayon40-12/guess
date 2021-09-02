@@ -1,0 +1,11 @@
+Param(
+  actions: [
+    (RawData(["u"]), TotalInterval(from: 0, to: 1, total: 100)),
+  ],
+  config: (t_max: 1, dim: D1((200,20))),
+  integrator: RK4(dt: 1e-3),
+  symbols: [
+    "u' = #KTx[] (5*u)
+     *u := x<30 ? 10 : 0",
+  ],
+)
