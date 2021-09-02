@@ -86,4 +86,6 @@ def animate(i):
 ani = animation.FuncAnimation(fig, animate, init_func=init, frames=n, blit=True, interval=16, repeat=True)
 
 #plt.show()
-ani.save("{}_{}.gif".format(argv[2],argv[3]))
+pos = argv[1].rfind('/')
+path = argv[1][:pos+1]
+ani.save("{}{}_{}.gif".format(path,argv[2],argv[3]))
