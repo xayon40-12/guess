@@ -200,7 +200,7 @@ impl Action {
                                 let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
                                 let (moms,name) = (moms.iter().map(|i| vvtos(i,w as usize,venot)).collect::<Vec<_>>(), "SF");
                                 write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
-                                write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
+                                //write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
                                 let (moms,name) = (vvtos(&moms,w as usize,venot),"SF");
@@ -210,11 +210,13 @@ impl Action {
                         Shape::Radial => {
                             let a = h.get("tmp")?.VF64();
                             let rad = radial(&a, w as usize, &dim, &phy, true);
+                            let d = rad[0][rad[0].len()-1].pos;
+                            let rad = rad.into_iter().map(|r| r.into_iter().rev().map(|mut v| {v.pos =  d-v.pos; v}).collect::<Vec<_>>()).collect::<Vec<_>>();
                             if rad.len() > 1 {
                                 let rad = cumulants(rad,2);
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_SF");
                                 write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
-                                write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
+                                //write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let (moms,name) = (vtos(&rad[0],renot), "radial_SF");
                                 write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
@@ -242,7 +244,7 @@ impl Action {
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                         let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
                         write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|DSF|{}\n", t, var_name, vvtos(&moms[0],w as usize,venot)));
-                        write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|sigma_DSF|{}\n", t, var_name, vvtos(&moms[1],w as usize,venot)));
+                        //write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|sigma_DSF|{}\n", t, var_name, vvtos(&moms[1],w as usize,venot)));
                     } else {
                         let moms = h.get_firsts("dstFFT",len*w as usize)?.VF64_2();
                         write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|DSF|{}\n", t, var_name, vtos(&moms,cenot)));
@@ -271,7 +273,7 @@ impl Action {
                                 let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
                                 let (moms,name) = (moms.iter().map(|i| vvtos(i,w as usize,venot)).collect::<Vec<_>>(), "correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
-                                write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
+                                //write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let moms = h.get_firsts("tmp",len*w as usize)?.VF64();
                                 let (moms,name) = (vvtos(&moms,w as usize,venot),"correlation");
@@ -285,7 +287,7 @@ impl Action {
                                 let rad = cumulants(rad,2);
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
-                                write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
+                                //write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let (moms,name) = (vtos(&rad[0],renot), "radial_correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
