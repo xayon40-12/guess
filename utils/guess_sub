@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import sys
 import os
 
@@ -7,7 +7,7 @@ args = [i for i in sys.argv if "-g" not in i]
 thisname = args.pop(0)
 runname = (
     os.popen(
-        "echo $(which %s_run 2> /dev/null)"
+        "echo $(which %s 2> /dev/null)"
         % thisname[thisname.rfind("/") + 1 : thisname.rfind("_")]
     )
     .read()
