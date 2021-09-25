@@ -1,7 +1,7 @@
 use crate::simulation::Vars;
 use gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
 use gpgpu::descriptors::KernelArg::*;
-use gpgpu::kernels::{radial, Radial};
+use gpgpu::kernels::{radial, Origin, Radial};
 use gpgpu::{Dim::*, DimDir::*};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -129,7 +129,7 @@ impl Action {
                     let dim: [usize; 3] = vars.dim.into();
                     let phy: [f64; 3] = vars.phy;
                     let raw = h.get(&vars.dvars[id].0)?.VF64();
-                    let mut rad = radial(&raw, w as usize, &dim, &phy, false);
+                    let mut rad = radial(&raw, w as usize, &dim, &phy, false, Origin::Center);
                     let vl = rad[0][0].vals.len();
                     rad.par_iter_mut().for_each(|r|
                         for i in 1..r.len() {
@@ -209,9 +209,7 @@ impl Action {
                         },
                         Shape::Radial => {
                             let a = h.get("tmp")?.VF64();
-                            let rad = radial(&a, w as usize, &dim, &phy, true);
-                            let d = rad[0][rad[0].len()-1].pos;
-                            let rad = rad.into_iter().map(|r| r.into_iter().rev().map(|mut v| {v.pos =  d-v.pos; v}).collect::<Vec<_>>()).collect::<Vec<_>>();
+                            let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Corner);
                             if rad.len() > 1 {
                                 let rad = cumulants(rad,2);
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_SF");
@@ -282,7 +280,7 @@ impl Action {
                         },
                         Shape::Radial => {
                             let a = h.get("tmp")?.VF64();
-                            let rad = radial(&a, w as usize, &dim, &phy, true);
+                            let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Center);
                             if rad.len() > 1 {
                                 let rad = cumulants(rad,2);
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_correlation");
