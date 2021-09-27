@@ -129,7 +129,7 @@ impl Action {
                     let dim: [usize; 3] = vars.dim.into();
                     let phy: [f64; 3] = vars.phy;
                     let raw = h.get(&vars.dvars[id].0)?.VF64();
-                    let mut rad = radial(&raw, w as usize, &dim, &phy, false, Origin::Center);
+                    let mut rad = radial(&raw, w as usize, &dim, &phy, false, Origin::Center, true);
                     let vl = rad[0][0].vals.len();
                     rad.par_iter_mut().for_each(|r|
                         for i in 1..r.len() {
@@ -209,7 +209,7 @@ impl Action {
                         },
                         Shape::Radial => {
                             let a = h.get("tmp")?.VF64();
-                            let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Corner);
+                            let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Corner, false);
                             if rad.len() > 1 {
                                 let rad = cumulants(rad,2);
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_SF");
@@ -280,7 +280,7 @@ impl Action {
                         },
                         Shape::Radial => {
                             let a = h.get("tmp")?.VF64();
-                            let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Center);
+                            let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Center, true);
                             if rad.len() > 1 {
                                 let rad = cumulants(rad,2);
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_correlation");
