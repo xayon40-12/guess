@@ -383,8 +383,9 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
+    let default_boundary = if let Some(def) = param.default_boundary { def } else { "periodic".into() };
     let (func, pdess, init, equationss) =
-        parse_symbols(param.symbols, consts, dpdes, dirs.len(), global_dim);
+        parse_symbols(param.symbols, consts, default_boundary, dpdes, dirs.len(), global_dim);
     for f in func {
         h = h.create_function(f);
     }
@@ -726,7 +727,7 @@ fn gen_func(name: String, args: Vec<(String, PrmType)>, src: String) -> SFunctio
             to_add.remove(&a.0);
             match a.1 {
                 Float => FCParam(a.0, CF64),
-                Integer => FCParam(a.0, CU32),
+                Integer => FCParam(a.0, CI32),
                 Indexable => FCGlobalPtr(a.0, CF64),
             }
         })
@@ -793,6 +794,7 @@ fn gen_init_kernel<'a>(
 fn parse_symbols(
     mut symbols: Vec<String>,
     mut consts: HashMap<String, String>,
+    default_boundary: String,
     mut dpdes: Vec<DPDE>,
     dim: usize,
     global_dim: usize,
@@ -836,7 +838,7 @@ fn parse_symbols(
                         var_name: name.into(),
                         var_dim: dim,
                         vec_dim: 1,
-                        boundary: "periodic".into(),
+                        boundary: default_boundary.clone(),
                     })
                 }
             }
@@ -863,10 +865,17 @@ fn parse_symbols(
     periodic1(_x,_w,_w_size,*u) := u[w + w_size*modx]
     periodic2(_x,_y,_w,_w_size,*u) := u[w + w_size*(modx + x_size*mody)]
     periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]
-    periodic({}_w,_w_size,*u) := periodic{}({}w,w_size,u)",
-            choice(["_x,", "_y,", "_z,"]),
-            global_dim,
-            choice(["x,", "y,", "z,"])
+    periodic({c}_w,_w_size,*u) := periodic{n}({p}w,w_size,u)
+    ghostx := (x<0 ? 0 : (x>=x_size ? x_size-1 : x))
+    ghosty := (y<0 ? 0 : (y>=y_size ? y_size-1 : y))
+    ghostz := (z<0 ? 0 : (z>=z_size ? z_size-1 : z))
+    ghost1(_x,_w,_w_size,*u) := u[w + w_size*ghostx]
+    ghost2(_x,_y,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*ghosty)]
+    ghost3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*(ghosty + y_size*ghostz))]
+    ghost({c}_w,_w_size,*u) := ghost{n}({p}w,w_size,u)",
+            c=choice(["_x,", "_y,", "_z,"]),
+            n=global_dim,
+            p=choice(["x,", "y,", "z,"])
         ),
     );
     for (i, symbols) in symbols.into_iter().enumerate() {

@@ -115,5 +115,6 @@ pub struct Param {
     pub symbols: Vec<String>,
     pub config: Config,
     pub integrator: Integrator,
+    pub default_boundary: Option<String>,
     pub initial_conditions_file: Option<String>,
 }
