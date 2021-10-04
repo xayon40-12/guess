@@ -1002,6 +1002,8 @@ fn parse_symbols(
 
         pdes.iter_mut()
             .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
+        equations.iter_mut()
+            .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
         pdess.push(pdes);
         equationss.push(equations);
     }
