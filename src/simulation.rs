@@ -460,7 +460,8 @@ fn extract_symbols(
     let mut init_equ_args = vec![KCBuffer("dst", CF64)];
     init_equ_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
     init_equ_args.extend(noises_names.iter().map(|n| KCBuffer(&n, CF64)));
-    let mut init_equ_args: Vec<SKernelConstructor> =
+    init_equ_args.push(KCParam("t", CF64));
+    let init_equ_args: Vec<SKernelConstructor> =
         init_equ_args.into_iter().map(|a| a.into()).collect();
 
     if init.len() > 0 {
@@ -480,7 +481,6 @@ fn extract_symbols(
     }
 
     let mut equation_kernelss = vec![];
-    init_equ_args.push(KCParam("t", CF64).into());
     if equationss.len() > 0 {
         for (i, equs) in equationss.into_iter().enumerate() {
             let mut equation_kernels = vec![];
@@ -666,6 +666,7 @@ fn extract_symbols(
             .map(|(n, _)| BufArg(n, if n.starts_with("dvar_") { &n[5..] } else { n }))
             .collect::<Vec<_>>();
         args.insert(0, BufArg("", ""));
+        args.push(Param("t", t_0.into()));
         let init_kernels = init_kernels
             .iter()
             .map(|n| (n.clone(), format!("{}_k1", n.replace("init_", "tmp_dvar_"))))
