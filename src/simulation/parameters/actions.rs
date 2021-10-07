@@ -256,13 +256,14 @@ impl Action {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
-                    let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
+                    //let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
                     let dim: [usize; 3] = vars.dim.into();
                     let mut dim: Vec<u32> = dim.iter().map(|&x| x as u32).collect();
                     vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
-                    h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
-                    h.run_arg("vcminus", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("moments","c"),BufArg("sum","dst"),Param("size",[dim[0],dim[1],dim[2],w].into()),Param("vect_dim",w.into())])?;
-                    h.run_algorithm("correlation",vars.dim,&vars.dirs,&["sum","tmp"],Ref(&w))?;
+                    //h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
+                    //h.run_arg("vcminus", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("moments","c"),BufArg("sum","dst"),Param("size",[dim[0],dim[1],dim[2],w].into()),Param("vect_dim",w.into())])?;
+                    //h.run_algorithm("correlation",vars.dim,&vars.dirs,&["sum","tmp"],Ref(&w))?;
+                    h.run_algorithm("correlation",vars.dim,&vars.dirs,&[&vars.dvars[id].0,"tmp"],Ref(&w))?;
                     let dim: [usize;3] = vars.dim.into();
                     let phy = vars.phy;
 
