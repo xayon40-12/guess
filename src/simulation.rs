@@ -805,6 +805,9 @@ fn parse_symbols(
     Vec<EqDescriptor>,
     Vec<Vec<EqDescriptor>>,
 ) {
+    symbols.iter_mut().for_each(|s| *s = s.lines().map(|l| {
+        if let Some(i) = l.find("//") { &l[0..i] } else { l }
+    }).collect::<Vec<_>>().join("\n"));
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
         re.replace_all(src, |caps: &Captures| {
