@@ -52,8 +52,8 @@ macro_rules! gen {
     }};
 }
 
-fn strip<'a>(s: &'a str) -> String {
-    s.replace("dvar_", "").replace("swap_", "").into()
+fn strip(s: &str) -> String {
+    s.replace("dvar_", "").replace("swap_", "")
 }
 
 // This function might be used with same first and second buffer as it compute only order 1 and 2
@@ -66,7 +66,7 @@ fn moms(
 ) -> gpgpu::Result<Vec<Vec<f64>>> {
     let mut dim: [usize; 3] = vars.dim.into();
     let mut dirs = vars.dim.all_dirs();
-    dirs.retain(|v| !vars.dirs.contains(&v));
+    dirs.retain(|v| !vars.dirs.contains(v));
     let mul = if complex { 2 } else { 1 };
     let prm = MomentsParam {
         num: 2,
@@ -129,6 +129,7 @@ impl Action {
                     let dim: [usize; 3] = vars.dim.into();
                     let phy: [f64; 3] = vars.phy;
                     let len = dim[0]*dim[1]*dim[2];
+                    let dx3 = dim.iter().zip(phy.iter()).filter(|&(_,&f)| f != 0.0).fold(1.0, |acc,(&i,&f)| acc*f/i as f64);
                     let raw = h.get_firsts(&vars.dvars[id].0, len*w as usize)?.VF64();
                     let mut rad = radial(&raw, w as usize, &dim, &phy, false, Origin::Center, true);
                     let vl = rad[0][0].vals.len();
@@ -139,17 +140,22 @@ impl Action {
                             }
                         }
                     );
-                    let n = 4; //number of cumulants
-                    if rad.len() > 1 {
-                        let rad = cumulants(rad,n);
-                        let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),format!("radial_{}", var_name));
-                        for (i,mom) in moms.iter().enumerate() {
-                            write_all(&vars.parent, "window.txt", &format!("{:e}|{}|$<(\\int_{{sv}}{})^{{{n}}}>_c$|{}\n", t, var_name, name, &mom, n=(i+1)));
+                    rad.par_iter_mut().for_each(|r| // mutiply by dx*dy*dz to actually integrate and not only sum
+                        for i in r.iter_mut().skip(1) {
+                            for j in 0..vl {
+                                i.vals[j] *= dx3;
+                            }
                         }
+                    );
+                    let n = 4; //number of moments
+                    let configurations = rad.len();
+                    let name = format!("radial_{}", var_name);
+                    let moms = if configurations > 1 {
+                        moments(rad,n).into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/")
                     } else {
-                        let (moms,name) = (vtos(&rad[0],renot), format!("radial_{}", var_name));
-                        write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name,moms));
-                    }
+                        vtos(&rad[0],renot)
+                    };
+                    write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                 }}
             }
             Moments(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
@@ -157,28 +163,31 @@ impl Action {
                 let w = vars.dvars[id].1;
                 let num = 4;
                 let prm = MomentsParam{ num: num as _, vect_dim: w, packed: true };
+                let dim: [usize; 3] = vars.dim.into();
+                let configurations = dim.iter().fold(1.0, |acc, &i| acc*i as f64);
                 h.run_algorithm("moments", vars.dim, &vars.dirs, &[&vars.dvars[id].0,"tmp","sum","moments"], Ref(&prm))?;
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let mut dim: [usize;3] = vars.dim.into();
                     vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                     let len = dim[0]*dim[1]*dim[2];
                     let prm = MomentsParam{ num: 2, vect_dim: w, packed: false };
-                    h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
-                    h.run_algorithm("moments", D2(num,len), &[Y], &["moments","moments","summoments","sumdst"], Ref(&prm))?;// WARNING use "moments" twice because num=2, if num>2 a tmp buffer is needed
-                    h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
+                    //h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
+                    h.run_algorithm("moments", D2(num,len), &[Y], &["moments","cumulants","summoments","sumdst"], Ref(&prm))?;// WARNING use "cumulants" as tmp buffer
+                    //h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
                     let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
                     //let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
-                    let moms = res.chunks(num*w as usize)
-                        .map(|c| vvtos(c,w as usize,venot))
-                        .collect::<Vec<String>>();
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}\n", t, var_name,&moms[0]));
+                    //let moms = res.chunks(num*w as usize) // use moments
+                    //    .map(|c| vvtos(c,w as usize,venot))
+                    //    .collect::<Vec<String>>();
+                    let moms = vvtos(&res, w as usize, venot);
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}#{}\n", t, var_name, configurations, moms));
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
 
                 } else {
                     let moments = h.get_firsts("moments",num*w as usize)?.VF64();
                     //let cumulants = moments_to_cumulants(&moments, w as _);
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}\n", t, var_name,vvtos(&moments,w as usize,venot)));
+                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}#{}\n", t, var_name, configurations, vvtos(&moments,w as usize,venot)));
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vvtos(&cumulants,w as usize,venot)));
                 }
             }},
@@ -211,10 +220,11 @@ impl Action {
                         Shape::Radial => {
                             let a = h.get_firsts("tmp", len*w as usize)?.VF64();
                             let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Corner, false);
-                            if rad.len() > 1 {
-                                let rad = cumulants(rad,2);
-                                let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_SF");
-                                write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
+                            let configurations = rad.len();
+                            if configurations > 1 {
+                                let rad = moments(rad,2); // use moments and not cumulants
+                                let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/"),"radial_SF");
+                                write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                                 //write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let (moms,name) = (vtos(&rad[0],renot), "radial_SF");
@@ -241,7 +251,7 @@ impl Action {
                     let phy = vars.phy.iter().fold(1.0, |a,i| if *i == 0.0 { a } else { i*a });
                     h.run_arg("ctimes", D1(len*w as usize*2), &[BufArg("dstFFT","src"),Param("c",phy.into()),BufArg("dstFFT","dst")])?;
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                        let moms = moms(w,&vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
+                        let moms = moms(w,vars,&["dstFFT","dstFFT","srcFFT","tmpFFT"],h,true)?;
                         write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|DSF|{}\n", t, var_name, vvtos(&moms[0],w as usize,venot)));
                         //write_all(&vars.parent, "dynamic_structure_factor.txt", &format!("{:e}|{}|sigma_DSF|{}\n", t, var_name, vvtos(&moms[1],w as usize,venot)));
                     } else {
@@ -270,7 +280,7 @@ impl Action {
                     match shape {
                         Shape::All => {
                             if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                                let moms = moms(w,&vars,&["tmp","tmp","sum","sumdst"],h,false)?;
+                                let moms = moms(w,vars,&["tmp","tmp","sum","sumdst"],h,false)?;
                                 let (moms,name) = (moms.iter().map(|i| vvtos(i,w as usize,venot)).collect::<Vec<_>>(), "correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
                                 //write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
@@ -283,10 +293,11 @@ impl Action {
                         Shape::Radial => {
                             let a = h.get_firsts("tmp", len*w as usize)?.VF64();
                             let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Center, true);
-                            if rad.len() > 1 {
-                                let rad = cumulants(rad,2);
-                                let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>(),"radial_correlation");
-                                write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}\n", t, var_name, name, &moms[0]));
+                            let configurations = rad.len();
+                            if configurations > 1 {
+                                let rad = moments(rad,2); // use moments and not cumulants
+                                let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/"),"radial_correlation");
+                                write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                                 //write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
                             } else {
                                 let (moms,name) = (vtos(&rad[0],renot), "radial_correlation");
@@ -310,15 +321,14 @@ impl Action {
                     let prm = MomentsParam{ num, vect_dim: w, packed: false };
                     h.run_algorithm("moments", vars.dim, &dir, &[&vars.dvars[id].0,"tmp","tmp2","sum"], Ref(&prm))?;
                     let res = h.get_firsts("sum",num as usize*len*w as usize)?.VF64();
-                    let cumulants = moments_to_cumulants(&res,len*w as usize);//.chunks((num*w) as _).fold(vec![vec![];num as _], |mut acc,i| {i.chunks(w as _).enumerate().for_each(|(i,v)| acc[i].extend_from_slice(v)); acc});
-                    let moms = cumulants.chunks(len*w as usize)
+                    //let cumulants = moments_to_cumulants(&res,len*w as usize);//.chunks((num*w) as _).fold(vec![vec![];num as _], |mut acc,i| {i.chunks(w as _).enumerate().for_each(|(i,v)| acc[i].extend_from_slice(v)); acc});
+                    //let moms = cumulants.chunks(len*w as usize)
+                    let moms = res.chunks(len*w as usize) // keep moments
                         .map(|c| vvtos(c,w as usize,venot))
                         .collect::<Vec<String>>();
-                    let mut data = String::new();
-                    for (m,name) in moms.iter().zip((1..).map(|i| format!("<{}^{}>c",var_name,i))) {
-                        data += &format!("{:e}|{}|raw|{}\n", t, name, m);
-                    }
-                    write_all(&vars.parent, "raw.txt", &data);
+                    let configurations = moms.len();
+                    let moms = moms.join("/");
+                    write_all(&vars.parent, "raw.txt", &format!("{:e}|{}|raw|{}#{}\n", t, var_name, configurations, moms));
                 } else {
                     let len = vars.len;
                     let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
@@ -330,8 +340,7 @@ impl Action {
         }
     }
 }
-
-pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
+pub fn moments(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
     let nbsim = a.len();
     let len = a[0].len();
     let w = a[0][0].vals.len();
@@ -357,12 +366,22 @@ pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
     }
     for i in 0..len {
         for j in 0..w {
-            let c = moments_to_cumulants(
-                &(0..num)
-                    .map(|n| moms[n][i].vals[j] / nbsim as f64)
-                    .collect::<Vec<_>>(),
-                1,
-            );
+            for n in 0..num {
+                moms[n][i].vals[j] /= nbsim as f64;
+            }
+        }
+    }
+    moms
+}
+pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
+    let nbsim = a.len();
+    let len = a[0].len();
+    let w = a[0][0].vals.len();
+    let mut moms: Vec<Vec<Radial>> = moments(a, num);
+    for i in 0..len {
+        for j in 0..w {
+            let c =
+                moments_to_cumulants(&(0..num).map(|n| moms[n][i].vals[j]).collect::<Vec<_>>(), 1);
             for n in 0..num {
                 moms[n][i].vals[j] = c[n];
             }
