@@ -147,11 +147,11 @@ impl Action {
                             }
                         }
                     );
-                    let n = 4; //number of moments
+                    let num = 4; //number of moments
                     let configurations = rad.len();
                     let name = format!("radial_{}", var_name);
                     let moms = if configurations > 1 {
-                        moments(rad,n).into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/")
+                        moments(rad,num).into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/")
                     } else {
                         vtos(&rad[0],renot)
                     };
@@ -197,6 +197,7 @@ impl Action {
                 let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
+                    let num = 2;
                     h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
                     h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], Ref(&w))?;
                     h.run_arg("kc_sqrmod", D1(len*w as usize), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
@@ -222,7 +223,7 @@ impl Action {
                             let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Corner, false);
                             let configurations = rad.len();
                             if configurations > 1 {
-                                let rad = moments(rad,2); // use moments and not cumulants
+                                let rad = moments(rad,num); // use moments and not cumulants
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/"),"radial_SF");
                                 write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                                 //write_all(&vars.parent, "static_structure_factor.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
@@ -266,6 +267,7 @@ impl Action {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
+                    let num = 2;
                     //let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
                     let dim: [usize; 3] = vars.dim.into();
                     let mut dim: Vec<u32> = dim.iter().map(|&x| x as u32).collect();
@@ -295,7 +297,7 @@ impl Action {
                             let rad = radial(&a, w as usize, &dim, &phy, true, Origin::Center, true);
                             let configurations = rad.len();
                             if configurations > 1 {
-                                let rad = moments(rad,2); // use moments and not cumulants
+                                let rad = moments(rad,num); // use moments and not cumulants
                                 let (moms,name) = (rad.into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/"),"radial_correlation");
                                 write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                                 //write_all(&vars.parent, "correlation.txt", &format!("{:e}|{}|sigma_{}|{}\n", t, var_name, name, &moms[1]));
@@ -313,7 +315,7 @@ impl Action {
                 let w = vars.dvars[id].1;
                 let var_name = strip(&vars.dvars[id].0);
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                    let num = 4;
+                    let num = 2;
                     let dir = [X,Y,Z].iter().take(vars.dim.len()).filter(|i| !vars.dirs.contains(i)).map(|i| *i).collect::<Vec<gpgpu::DimDir>>();
                     let mut dim: [usize;3] = vars.dim.into();
                     dir.iter().for_each(|d| dim[*d as usize] = 1);
