@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
-gpgpu = { path = "../gpgpu-rs" }
+gpgpu = { git = "https://github.com/xayon40-12/gpgpu-rs" }
 regex = "1"
 clap = "2.33.0"
 ron = "*"

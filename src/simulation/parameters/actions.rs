@@ -374,7 +374,6 @@ pub fn moments(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
     moms
 }
 pub fn cumulants(a: Vec<Vec<Radial>>, num: usize) -> Vec<Vec<Radial>> {
-    let nbsim = a.len();
     let len = a[0].len();
     let w = a[0][0].vals.len();
     let mut moms: Vec<Vec<Radial>> = moments(a, num);
