@@ -97,8 +97,11 @@ fn parse(input: &str) -> IResult<&str, Line> {
     if count == 1 {
         if vec.len() == 1 {
             // if single simulation with no higher order moments, computer 2nd order
-            let sec_ord = vec[0].iter().map(|i| i.clone() ^ 2).collect();
-            vec.push(sec_ord);
+            let num = 4;
+            for n in 2..=num {
+                let next_ord = vec[0].iter().map(|i| i.clone() ^ n).collect();
+                vec.push(next_ord);
+            }
         }
     } else {
         vec = vec

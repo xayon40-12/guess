@@ -87,7 +87,8 @@ impl Files {
                     .clone()
                     .fold(Data::new(&fst, &src), |acc, i| acc + Data::new(&i, &src));
                 acc.finish();
-                writeln!(dst, "{}", acc).expect(&format!("Could not write to {}", dstname));
+                writeln!(dst, "{}", acc)
+                    .unwrap_or_else(|_| panic!("Could not write to {}", dstname));
             });
     }
 }
