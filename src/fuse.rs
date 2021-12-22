@@ -53,7 +53,6 @@ fn files(dir: &str) -> Vec<String> {
 
 #[derive(Debug)]
 struct Files {
-    param: String,
     src_folders: Vec<String>,
     src_names: Vec<String>,
     dst_observable: Vec<(String, File)>,
@@ -61,13 +60,11 @@ struct Files {
 
 impl Files {
     pub fn new(
-        param: String,
         src_folders: Vec<String>,
         src_names: Vec<String>,
         dst_observable: Vec<(String, File)>,
     ) -> Files {
         Files {
-            param,
             src_folders,
             src_names,
             dst_observable,
@@ -143,7 +140,7 @@ fn search_files(name: &str) -> Files {
         .expect("Could not create destination file param.");
     write!(param_file, "{}", param).unwrap();
 
-    Files::new(param, folders, names, dst_observable)
+    Files::new(folders, names, dst_observable)
 }
 
 pub fn fuse(args: Vec<String>) {

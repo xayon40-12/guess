@@ -5,13 +5,12 @@ use gpgpu::descriptors::{
     SFunctionConstructor::*, SKernelConstructor, Types::*,
 };
 use gpgpu::functions::SFunction;
-use gpgpu::integrators::pde_ir::Indexable;
-use gpgpu::integrators::pde_parser::DPDE;
 use gpgpu::integrators::{
     create_euler_pde, create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam,
     SPDE,
 };
 use gpgpu::kernels::SKernel;
+use gpgpu::pde_parser::{pde_ir::Indexable, DPDE};
 use gpgpu::{handler::HandlerBuilder, Handler};
 use gpgpu::{
     Dim::{self, *},
@@ -383,9 +382,19 @@ fn extract_symbols(
         }
     }
     let noises_names = noises_names.into_iter().collect::<Vec<_>>();
-    let default_boundary = if let Some(def) = param.default_boundary { def } else { "periodic".into() };
-    let (func, pdess, init, equationss) =
-        parse_symbols(param.symbols, consts, default_boundary, dpdes, dirs.len(), global_dim);
+    let default_boundary = if let Some(def) = param.default_boundary {
+        def
+    } else {
+        "periodic".into()
+    };
+    let (func, pdess, init, equationss) = parse_symbols(
+        param.symbols,
+        consts,
+        default_boundary,
+        dpdes,
+        dirs.len(),
+        global_dim,
+    );
     for f in func {
         h = h.create_function(f);
     }
@@ -805,9 +814,19 @@ fn parse_symbols(
     Vec<EqDescriptor>,
     Vec<Vec<EqDescriptor>>,
 ) {
-    symbols.iter_mut().for_each(|s| *s = s.lines().map(|l| {
-        if let Some(i) = l.find("//") { &l[0..i] } else { l }
-    }).collect::<Vec<_>>().join("\n"));
+    symbols.iter_mut().for_each(|s| {
+        *s = s
+            .lines()
+            .map(|l| {
+                if let Some(i) = l.find("//") {
+                    &l[0..i]
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
         re.replace_all(src, |caps: &Captures| {
@@ -828,7 +847,7 @@ fn parse_symbols(
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_empty = Regex::new(r"^\s*$").unwrap();
 
-    use gpgpu::integrators::pde_parser::*;
+    use gpgpu::pde_parser::*;
     let mut lexer_idx = 0;
 
     for symbols in &symbols {
@@ -878,9 +897,9 @@ fn parse_symbols(
     ghost2(_x,_y,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*ghosty)]
     ghost3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*(ghosty + y_size*ghostz))]
     ghost({c}_w,_w_size,*u) := ghost{n}({p}w,w_size,u)",
-            c=choice(["_x,", "_y,", "_z,"]),
-            n=global_dim,
-            p=choice(["x,", "y,", "z,"])
+            c = choice(["_x,", "_y,", "_z,"]),
+            n = global_dim,
+            p = choice(["x,", "y,", "z,"])
         ),
     );
     for (i, symbols) in symbols.into_iter().enumerate() {
@@ -889,14 +908,35 @@ fn parse_symbols(
 
         macro_rules! parse {
             ($j:ident $nj:ident, $src:ident, $current_var:expr) => {{
-                let mut parsed = parse(&dpdes, &$current_var.and_then(|name: &String| hdpdes.get(name).and_then(|pde| Some(if pde.vec_dim>1 {
-                    Indexable::new_vector(pde.var_dim, global_dim, pde.vec_dim, name, &pde.boundary)
-                } else {
-                    Indexable::new_scalar(pde.var_dim, global_dim, name, &pde.boundary)
-                }))), lexer_idx, global_dim, &$src).expect(&format!(
+                let mut parsed = parse(
+                    &dpdes,
+                    &$current_var.and_then(|name: &String| {
+                        hdpdes.get(name).and_then(|pde| {
+                            Some(if pde.vec_dim > 1 {
+                                Indexable::new_vector(
+                                    pde.var_dim,
+                                    global_dim,
+                                    pde.vec_dim,
+                                    name,
+                                    &pde.boundary,
+                                )
+                            } else {
+                                Indexable::new_scalar(pde.var_dim, global_dim, name, &pde.boundary)
+                            })
+                        })
+                    }),
+                    lexer_idx,
+                    global_dim,
+                    &$src,
+                )
+                .expect(&format!(
                     "Parse error in sub-process {} line{}:\n|------------\n{}\n|------------\n",
                     i,
-                    if $j==$nj { format!(" {}", $j + 1) } else { format!("s {}-{}", $j, $nj)  },
+                    if $j == $nj {
+                        format!(" {}", $j + 1)
+                    } else {
+                        format!("s {}-{}", $j, $nj)
+                    },
                     &$src,
                 ));
                 lexer_idx += parsed.funs.len();
@@ -972,7 +1012,7 @@ fn parse_symbols(
                     } else {
                         vec![src]
                     }
-                 } else {
+                } else {
                     parse!(j nj, src, Some(&dvar))
                 };
                 pdes.push(SPDE { dvar, expr });
@@ -1002,7 +1042,7 @@ fn parse_symbols(
             }
             equ! {search_init init}
             equ! {search_e equations}
-            if !found  && !search_empty.is_match(&l) {
+            if !found && !search_empty.is_match(&l) {
                 panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
             }
         };
@@ -1014,7 +1054,7 @@ fn parse_symbols(
         for (cj, cl) in symbols.lines().enumerate() {
             if cl.contains("=") {
                 if !first {
-                    doit(j,nj,&l);
+                    doit(j, nj, &l);
                 } else {
                     first = true;
                 }
@@ -1025,10 +1065,11 @@ fn parse_symbols(
             }
             nj = cj;
         }
-        doit(j,nj,&l);
+        doit(j, nj, &l);
         pdes.iter_mut()
             .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
-        equations.iter_mut()
+        equations
+            .iter_mut()
             .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
         pdess.push(pdes);
         equationss.push(equations);
