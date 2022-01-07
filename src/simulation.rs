@@ -844,6 +844,7 @@ fn parse_symbols(
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let search_eqpde = Regex::new(r"^\s*(\w+)'\|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_empty = Regex::new(r"^\s*$").unwrap();
 
@@ -853,7 +854,10 @@ fn parse_symbols(
     for symbols in &symbols {
         for l in symbols.lines() {
             // search for pdes or expressions
-            if let Some(caps) = search_pde.captures(l).or(search_e.captures(l)) {
+            if let Some(caps) = search_pde
+                .captures(l)
+                .or(search_e.captures(l).or(search_eqpde.captures(l)))
+            {
                 let name = &caps[1];
                 if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
                     // if a pde is not referenced add it to the known pdes with default
@@ -990,57 +994,49 @@ fn parse_symbols(
                 func.push(gen_func(name, args, src));
                 found = true;
             }
-            if let Some(caps) = search_pde.captures(&l) {
-                let dvar: String = caps[1].into();
-                let src = replace(&caps[3], &consts);
-                let vec_dim = hdpdes.get(&dvar).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &dvar)).vec_dim;
-                let expr = if &caps[2] == ":" {
-                    if src.starts_with("(") && src.ends_with(")") {
-                        let expr = src[1..src.len() - 1]
-                            .split(";")
-                            .map(|i| i.trim().to_string())
-                            .collect::<Vec<_>>();
-                        if expr.len() != vec_dim {
-                            panic!(
-                                "The vectarial dim={} of '{}' is different from de dim={} parsed.",
-                                vec_dim,
-                                dvar,
-                                expr.len()
-                            );
-                        }
-                        expr
-                    } else {
-                        vec![src]
-                    }
-                } else {
-                    parse!(j nj, src, Some(&dvar))
-                };
-                pdes.push(SPDE { dvar, expr });
-                found = true;
-            }
-            macro_rules! equ {
-                ($search:ident $arr:ident) => {
+            macro_rules! beg {
+                ($search:ident $arr:ident, $name:ident, $expr:ident, $val:expr) => {
                     if let Some(caps) = $search.captures(&l) {
-                        let name = caps[1].into();
+                        let $name = caps[1].into();
                         let src = replace(&caps[3], &consts);
-                        let expr = if &caps[2] == ":" {
+                let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
+                        let $expr = if &caps[2] == ":" {
                             if src.starts_with("(") && src.ends_with(")") {
-                                src[1..src.len() - 1]
+                                let expr = src[1..src.len() - 1]
                                     .split(";")
                                     .map(|i| i.trim().to_string())
-                                    .collect()
+                                    .collect::<Vec<_>>();
+                                if expr.len() != vec_dim {
+                                    panic!(
+                                        "The vectarial dim={} of '{}' is different from de dim={} parsed.",
+                                        vec_dim,
+                                        $name,
+                                        expr.len()
+                                    );
+                                }
+                                expr
                             } else {
                                 vec![src]
                             }
                         } else {
-                            parse!(j nj, src, Some(&name))
+                            parse!(j nj, src, Some(&$name))
                         };
-                        $arr.push(EqDescriptor { name, expr });
+                        $arr.push($val);
                         found = true;
                     }
                 };
             }
+            macro_rules! equ {
+                ($search:ident $arr:ident) => {
+                    beg!($search $arr, name, expr, EqDescriptor { name, expr });
+                };
+                ($search:ident $arr:ident $eq:expr) => {
+                    beg!($search $arr, name, expr, SPDE {dvar: name,expr,is_eq: $eq});
+                };
+            }
             equ! {search_init init}
+            equ! {search_pde pdes false}
+            equ! {search_eqpde pdes true}
             equ! {search_e equations}
             if !found && !search_empty.is_match(&l) {
                 panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
