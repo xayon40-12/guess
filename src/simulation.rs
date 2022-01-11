@@ -747,7 +747,7 @@ fn gen_func(name: String, args: Vec<(String, PrmType)>, src: String) -> SFunctio
     let mut to_add = to_add.iter().collect::<Vec<_>>();
     to_add.sort();
     for g in to_add {
-        globals += &format!("    uint {} = {};\n", g.0, g.1);
+        globals += &format!("    int {} = {};\n", g.0, g.1);
     }
 
     SFunction {
