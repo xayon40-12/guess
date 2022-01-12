@@ -7,7 +7,7 @@ use gpgpu::descriptors::{
 use gpgpu::functions::SFunction;
 use gpgpu::integrators::{
     create_euler_pde, create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam,
-    SPDE,
+    SPDE, STEP,
 };
 use gpgpu::kernels::SKernel;
 use gpgpu::pde_parser::{pde_ir::Indexable, DPDE};
@@ -759,8 +759,8 @@ fn gen_func(name: String, args: Vec<(String, PrmType)>, src: String) -> SFunctio
     }
 }
 
-fn gen_single_stage_kernel<'a>(
-    name: &'a str,
+fn gen_single_stage_kernel(
+    name: &str,
     args: Vec<SKernelConstructor>,
     eqd: EqDescriptor,
 ) -> SKernel {
@@ -780,14 +780,14 @@ fn gen_single_stage_kernel<'a>(
     };
     SKernel {
         name: name.to_string(),
-        args: args,
+        args,
         src: format!("    uint _i = {};\n{}", id, expr),
         needed: vec![],
     }
 }
 
-fn gen_init_kernel<'a>(
-    name: &'a str,
+fn gen_init_kernel(
+    name: &str,
     len: usize,
     args: Vec<SKernelConstructor>,
     ini: EqDescriptor,
@@ -845,6 +845,7 @@ fn parse_symbols(
     let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_eqpde = Regex::new(r"^\s*(\w+)'\|\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let search_betweenpde = Regex::new(r"^\s*(\w+)'(\d*)>\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_empty = Regex::new(r"^\s*$").unwrap();
 
@@ -856,7 +857,9 @@ fn parse_symbols(
             // search for pdes or expressions
             if let Some(caps) = search_pde
                 .captures(l)
-                .or(search_e.captures(l).or(search_eqpde.captures(l)))
+                .or(search_e.captures(l))
+                .or(search_eqpde.captures(l))
+                .or(search_betweenpde.captures(l))
             {
                 let name = &caps[1];
                 if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
@@ -1025,18 +1028,53 @@ fn parse_symbols(
                         found = true;
                     }
                 };
+                ($search:ident $arr:ident, $name:ident, $expr:ident, $i:ident, $val:expr) => {
+                    if let Some(caps) = $search.captures(&l) {
+                        let $name = caps[1].into();
+                        let $i = caps[2].parse::<u32>().unwrap();
+                        let src = replace(&caps[4], &consts);
+                let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
+                        let $expr = if &caps[3] == ":" {
+                            if src.starts_with("(") && src.ends_with(")") {
+                                let expr = src[1..src.len() - 1]
+                                    .split(";")
+                                    .map(|i| i.trim().to_string())
+                                    .collect::<Vec<_>>();
+                                if expr.len() != vec_dim {
+                                    panic!(
+                                        "The vectarial dim={} of '{}' is different from de dim={} parsed.",
+                                        vec_dim,
+                                        $name,
+                                        expr.len()
+                                    );
+                                }
+                                expr
+                            } else {
+                                vec![src]
+                            }
+                        } else {
+                            parse!(j nj, src, Some(&$name))
+                        };
+                        $arr.push($val);
+                        found = true;
+                    }
+                };
             }
             macro_rules! equ {
                 ($search:ident $arr:ident) => {
                     beg!($search $arr, name, expr, EqDescriptor { name, expr });
                 };
-                ($search:ident $arr:ident $eq:expr) => {
-                    beg!($search $arr, name, expr, SPDE {dvar: name,expr,is_eq: $eq});
+                ($search:ident $arr:ident, $step:expr) => {
+                    beg!($search $arr, name, expr, SPDE {dvar: name,expr,step: $step});
+                };
+                ($search:ident $arr:ident, $i:ident $step:expr) => {
+                    beg!($search $arr, name, expr, $i, SPDE {dvar: name,expr,step: $step});
                 };
             }
             equ! {search_init init}
-            equ! {search_pde pdes false}
-            equ! {search_eqpde pdes true}
+            equ! {search_pde pdes, STEP::PDE}
+            equ! {search_eqpde pdes, STEP::EQPDE}
+            equ! {search_betweenpde pdes, i STEP::BETWEENPDE(i)}
             equ! {search_e equations}
             if !found && !search_empty.is_match(&l) {
                 panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
