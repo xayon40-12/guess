@@ -708,7 +708,7 @@ fn extract_symbols(
     let callbacks = param
         .actions
         .into_iter()
-        .map(|(c, a)| (a.to_activation(), c.to_callback(&name_to_index, num_pdes)))
+        .map(|(c, a)| (a.to_activation(dt), c.to_callback(&name_to_index, num_pdes)))
         .collect();
 
     Ok(Some(Simulation {
