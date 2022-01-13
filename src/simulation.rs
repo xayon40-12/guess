@@ -960,7 +960,7 @@ fn parse_symbols(
                 if &caps[2] != ":" {
                     let mut res = parse!(j nj, src, None);
                     if res.len() == 1 {
-                        src = res.pop().unwrap();
+                        src = format!("({})", res.pop().unwrap());
                     } else {
                         src = format!("[{}]", res.join(";"));
                     }
