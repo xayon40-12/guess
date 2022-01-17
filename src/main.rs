@@ -4,7 +4,7 @@ use guess::*;
 use regex::Regex;
 use simulation::NumType::*;
 
-fn main() -> gpgpu::Result<()> {
+fn main() -> crate::gpgpu::Result<()> {
     let matches = App::new("guess")
                           .version("0.1")
                           .author("Nathan Touroux <touroux.nathan@gmail.com>")
@@ -66,7 +66,7 @@ fn main() -> gpgpu::Result<()> {
         };
         (param, num)
     };
-    let run_sim = |params: Vec<&str>| -> gpgpu::Result<()> {
+    let run_sim = |params: Vec<&str>| -> crate::gpgpu::Result<()> {
         for param in params {
             let (param, num) = extract(param);
             Simulation::from_param(&param, num, false)?;

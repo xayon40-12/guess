@@ -1,18 +1,18 @@
-use gpgpu::algorithms::{AlgorithmParam::*, RandomType};
-use gpgpu::data_file::Format;
-use gpgpu::descriptors::{
+use crate::gpgpu::algorithms::{AlgorithmParam::*, RandomType};
+use crate::gpgpu::data_file::Format;
+use crate::gpgpu::descriptors::{
     BufferConstructor::*, ConstructorTypes::*, KernelArg::*, KernelConstructor::*,
     SFunctionConstructor::*, SKernelConstructor, Types::*,
 };
-use gpgpu::functions::SFunction;
-use gpgpu::integrators::{
+use crate::gpgpu::functions::SFunction;
+use crate::gpgpu::integrators::{
     create_euler_pde, create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam,
     SPDE, STEP,
 };
-use gpgpu::kernels::SKernel;
-use gpgpu::pde_parser::{pde_ir::Indexable, DPDE};
-use gpgpu::{handler::HandlerBuilder, Handler};
-use gpgpu::{
+use crate::gpgpu::kernels::SKernel;
+use crate::gpgpu::pde_parser::{pde_ir::Indexable, DPDE};
+use crate::gpgpu::{handler::HandlerBuilder, Handler};
+use crate::gpgpu::{
     Dim::{self, *},
     DimDir,
 };
@@ -66,7 +66,7 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn from_param<'a>(file_name: &'a str, num: NumType, check: bool) -> gpgpu::Result<()> {
+    pub fn from_param<'a>(file_name: &'a str, num: NumType, check: bool) -> crate::gpgpu::Result<()> {
         let paramstr = std::fs::read_to_string(file_name)
             .expect(&format!("Could not find parameter file \"{}\".", file_name));
         let param: Param = match file_name
@@ -136,7 +136,7 @@ impl Simulation {
             }
         }
 
-        let run = |parent: &String, id: u64| -> gpgpu::Result<()> {
+        let run = |parent: &String, id: u64| -> crate::gpgpu::Result<()> {
             let targetstr = format!("{}/config", parent);
             let target = std::path::Path::new(&targetstr);
             std::fs::create_dir_all(&target).expect(&format!(
@@ -180,7 +180,7 @@ impl Simulation {
         Ok(())
     }
 
-    pub fn run(&mut self) -> gpgpu::Result<()> {
+    pub fn run(&mut self) -> crate::gpgpu::Result<()> {
         let Vars {
             t_0,
             t_max,
@@ -275,7 +275,7 @@ fn extract_symbols(
     parent: String,
     check: bool,
     sim_id: u64,
-) -> gpgpu::Result<Option<Simulation>> {
+) -> crate::gpgpu::Result<Option<Simulation>> {
     let upparent = if parent.rfind('/').is_some() {
         format!(
             "{}/",
@@ -849,7 +849,7 @@ fn parse_symbols(
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_empty = Regex::new(r"^\s*$").unwrap();
 
-    use gpgpu::pde_parser::*;
+    use crate::gpgpu::pde_parser::*;
     let mut lexer_idx = 0;
 
     for symbols in &symbols {

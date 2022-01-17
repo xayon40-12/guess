@@ -48,7 +48,7 @@ impl Repetition {
                 })
             }
             TotalInterval { from, to, total } => {
-                let total = if total < 3.0 { 2.01 } else { total - 0.99 };
+                let total = if total < 3.0 { 2.0 } else { total - 1.0 };
                 let every = (to - from) / total;
                 let mut next = from;
                 Box::new(move |t| {

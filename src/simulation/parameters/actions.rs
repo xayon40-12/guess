@@ -1,8 +1,8 @@
 use crate::simulation::Vars;
-use gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
-use gpgpu::descriptors::KernelArg::*;
-use gpgpu::kernels::{radial, Origin, Radial};
-use gpgpu::{Dim::*, DimDir::*};
+use crate::gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
+use crate::gpgpu::descriptors::KernelArg::*;
+use crate::gpgpu::kernels::{radial, Origin, Radial};
+use crate::gpgpu::{Dim::*, DimDir::*};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ pub enum Action {
 }
 pub use Action::*;
 
-pub type Callback = Box<dyn FnMut(&mut gpgpu::Handler, &Vars, f64) -> gpgpu::Result<()>>;
+pub type Callback = Box<dyn FnMut(&mut crate::gpgpu::Handler, &Vars, f64) -> crate::gpgpu::Result<()>>;
 
 fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
     let write = |f, c: &str| {
@@ -61,9 +61,9 @@ fn moms(
     w: u32,
     vars: &Vars,
     bufs: &[&'static str],
-    h: &mut gpgpu::Handler,
+    h: &mut crate::gpgpu::Handler,
     complex: bool,
-) -> gpgpu::Result<Vec<Vec<f64>>> {
+) -> crate::gpgpu::Result<Vec<Vec<f64>>> {
     let mut dim: [usize; 3] = vars.dim.into();
     let mut dirs = vars.dim.all_dirs();
     dirs.retain(|v| !vars.dirs.contains(v));
@@ -316,7 +316,7 @@ impl Action {
                 let var_name = strip(&vars.dvars[id].0);
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
                     let num = 2;
-                    let dir = [X,Y,Z].iter().take(vars.dim.len()).filter(|i| !vars.dirs.contains(i)).map(|i| *i).collect::<Vec<gpgpu::DimDir>>();
+                    let dir = [X,Y,Z].iter().take(vars.dim.len()).filter(|i| !vars.dirs.contains(i)).map(|i| *i).collect::<Vec<crate::gpgpu::DimDir>>();
                     let mut dim: [usize;3] = vars.dim.into();
                     dir.iter().for_each(|d| dim[*d as usize] = 1);
                     let len = dim[0]*dim[1]*dim[2];
