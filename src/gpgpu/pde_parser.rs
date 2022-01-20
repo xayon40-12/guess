@@ -1,4 +1,5 @@
 use crate::gpgpu::functions::SFunction;
+use crate::gpgpu::pde_parser::pde_ir::ir_helper::to_priors;
 use nom::error::Error;
 pub mod pde_ir;
 pub mod pde_lexer;
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parsed {
     pub ocl: Vec<String>,
+    pub priors: Vec<String>,
     pub funs: Vec<SFunction>,
 }
 
@@ -22,10 +24,13 @@ pub fn parse<'a>(
     fun_len: usize,
     global_dim: usize,
     math: &'a str,
+    compact: bool,
 ) -> Result<Parsed, Error<&'a str>> {
     let (_, parsed) = pde_lexer::parse(context, current_var, fun_len, global_dim, math)?;
+    let (ocl, m) = parsed.token.to_ocl(compact);
     Ok(Parsed {
-        ocl: parsed.token.to_ocl(),
+        ocl,
+        priors: to_priors(m),
         funs: parsed.funs,
     })
 }
@@ -33,7 +38,7 @@ pub fn parse<'a>(
 #[test]
 fn pde_lexer() {
     let parse = |c: &[DPDE], cur: &Option<SPDETokens>, f: usize, gd: usize, m: &str| {
-        parse(c, cur, gd, f, m).unwrap()
+        parse(c, cur, gd, f, m, false).unwrap()
     };
     let u = DPDE {
         var_name: "u".into(),

@@ -63,7 +63,15 @@ fn fix_constructor(
     let mut args = args.unwrap_or_default();
     args.insert(0, init);
     compact(args).bind(|p| {
-        let p = p.into_iter().map(|i| novec(i.to_ocl())).collect::<Vec<_>>();
+        //let mut m = HashMap::new();
+        let p = p
+            .into_iter()
+            .map(|i| {
+                let (i, _mi) = i.to_ocl(false); // TODO try to use true and propagate the priors in _mi in the LexerComp.
+                                                //m.extend(mi);
+                novec(i)
+            })
+            .collect::<Vec<_>>();
         let next = p.iter().map(|i| &i[..]).collect::<Vec<&str>>();
         // next[0] is the initial value for the newton iterativ method
         let newton_names = (0..next.len() - 1)

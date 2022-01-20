@@ -1,4 +1,5 @@
 pub use crate::gpgpu::dim::DimDir;
+use std::collections::HashMap;
 pub mod kt_scheme;
 pub mod lexer_compositor;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,7 @@ fn coords_str(c: &[i32; 4], dim: usize, vec_dim: usize) -> String {
     let res = (1..dim).fold(coo(0), |a, i| format!("{},{}", a, coo(i)));
     format!("{},{},{}", res, c[3], vec_dim)
 }
+
 impl Indexable {
     pub fn apply_idx(mut self, idx: &[i32; 4]) -> Self {
         for i in 0..4 {
@@ -127,6 +129,16 @@ impl Indexable {
             coords_str(&self.coord, self.global_dim, self.vec_dim),
             self.var_name
         )
+    }
+    pub fn compact(&self) -> (String, String) {
+        let expr = self.to_string();
+        let dirs = (0..self.global_dim).fold(String::new(), |acc, i| {
+            let v = self.coord[i];
+            let (d, v) = if v < 0 { ("m", -v) } else { ("p", v) };
+            format!("{}{}{}", acc, d, v)
+        });
+        let name = format!("{}{}{}", self.var_name, self.coord[3], dirs);
+        (name, expr)
     }
 }
 
@@ -239,20 +251,33 @@ impl SPDETokens {
         }
     }
 
-    fn _to_ocl(self) -> String {
+    fn _to_ocl(self, compact: bool) -> (String, HashMap<String, String>) {
         use SPDETokens::*;
+
+        let empty = |e| (e, HashMap::new());
+        let to_compact =
+            |(name, expr): (String, String)| (name.clone(), HashMap::from([(name, expr)]));
+        let ocl = |e: SPDETokens| e._to_ocl(compact);
+        let fuse = |(na, mut ma): (String, HashMap<String, String>), (nb, mb)| {
+            ma.extend(mb);
+            ((na, nb), ma)
+        };
+        let fuses = |a, b| fuse(ocl(a), ocl(b));
+        let app2 = |(e, m): ((String, String), HashMap<String, String>),
+                    f: &dyn Fn((String, String)) -> String| (f(e), m);
+        let app =
+            |(e, m): (String, HashMap<String, String>), f: &dyn Fn(String) -> String| (f(e), m);
         macro_rules! foldop {
             ($a:ident, $b:ident, $ext:literal, $op:tt) => {
-                format!(
-                    $ext,
+                app(
                     $b.into_iter()
-                        .map(|i| i._to_ocl())
-                        .fold($a._to_ocl(), |u, v| format!(
-                            "{} {} {}",
-                            u,
-                            stringify!($op),
-                            v
-                        ))
+                        .map(|i| i._to_ocl(compact))
+                        .fold($a._to_ocl(compact), |u, v| {
+                            app2(fuse(u, v), &|(u, v)| {
+                                format!("{} {} {}", u, stringify!($op), v)
+                            })
+                        }),
+                    &|a: String| format!($ext, a),
                 )
             };
             (par $a:ident $op:tt $b:ident) => {
@@ -264,30 +289,48 @@ impl SPDETokens {
         }
         match self {
             Add(a, b, _) => foldop!(par a + b),
-            Sub(a, b, _) => format!("({} - ({}))", a._to_ocl(), b._to_ocl()),
+            Sub(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("({} - ({}))", a, b)),
             Mul(a, b, _) => foldop!(a * b),
-            Div(a, b, _) => format!("{} / ({})", a._to_ocl(), b._to_ocl()),
-            Pow(a, b, _) => format!("pow({},{})", a._to_ocl(), b._to_ocl()),
-            Func(n, a, _) => format!(
-                "{}({})",
-                n,
-                a.into_iter()
-                    .map(|i| i._to_ocl())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            Symb(a) => a,
-            Const(a) => format!("{:e}", a),
-            Indx(a) => a.to_string(),
+            Div(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("{} / ({})", a, b)),
+            Pow(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("pow({},{})", a, b)),
+            Func(n, a, _) => {
+                if a.len() == 0 {
+                    empty(format!("{}()", n))
+                } else {
+                    let mut b = a.into_iter().map(|i| ocl(i)).collect::<Vec<_>>();
+                    let a = b.pop().unwrap();
+                    let r = b.into_iter().fold(a, |acc, i| {
+                        app2(fuse(acc, i), &|(a, b)| format!("{},{}", a, b))
+                    });
+                    app(r, &|e: String| format!("{}({})", n, e))
+                }
+            }
+            Symb(a) => empty(a),
+            Const(a) => empty(format!("{:e}", a)),
+            Indx(a) => {
+                if compact {
+                    to_compact(a.compact())
+                } else {
+                    empty(a.to_string())
+                }
+            }
             s => panic!("Not expected during SPDEToken::to_ocl: {:?}", s),
         }
     }
-    pub fn to_ocl(&self) -> Vec<String> {
+    pub fn to_ocl(&self, compact: bool) -> (Vec<String>, HashMap<String, String>) {
         use SPDETokens::*;
+        let mut vals = vec![];
+        let mut map = HashMap::new();
         match self.clone().optimize() {
-            Vect(v, _) => v.into_iter().map(|i| i._to_ocl()).collect(),
-            s => vec![s._to_ocl()],
+            Vect(v, _) => v.into_iter().map(|i| i._to_ocl(compact)).collect(),
+            s => vec![s._to_ocl(compact)],
         }
+        .into_iter()
+        .for_each(|(v, m)| {
+            vals.push(v);
+            map.extend(m);
+        });
+        (vals, map)
     }
 
     pub fn optimize(self) -> Self {
@@ -557,6 +600,12 @@ pub mod ir_helper {
         pub boundary: String,
         pub var_dim: usize,
         pub vec_dim: usize,
+    }
+
+    pub fn to_priors(m: HashMap<String, String>) -> Vec<String> {
+        m.into_iter()
+            .map(|(name, expr)| format!("double {} = {};", name, expr))
+            .collect()
     }
 
     pub fn func<'a, T: Into<SPDETokens>>(n: &'a str, a: Vec<T>) -> SPDETokens {

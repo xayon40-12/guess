@@ -66,7 +66,11 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn from_param<'a>(file_name: &'a str, num: NumType, check: bool) -> crate::gpgpu::Result<()> {
+    pub fn from_param<'a>(
+        file_name: &'a str,
+        num: NumType,
+        check: bool,
+    ) -> crate::gpgpu::Result<()> {
         let paramstr = std::fs::read_to_string(file_name)
             .expect(&format!("Could not find parameter file \"{}\".", file_name));
         let param: Param = match file_name
@@ -718,7 +722,12 @@ fn extract_symbols(
     }))
 }
 
-fn gen_func(name: String, args: Vec<(String, PrmType)>, src: String) -> SFunction {
+fn gen_func(
+    name: String,
+    args: Vec<(String, PrmType)>,
+    src: String,
+    priors: Vec<String>,
+) -> SFunction {
     let mut to_add: HashMap<String, String> = [
         ("x", "get_global_id(0)"),
         ("y", "get_global_id(1)"),
@@ -749,6 +758,9 @@ fn gen_func(name: String, args: Vec<(String, PrmType)>, src: String) -> SFunctio
     for g in to_add {
         globals += &format!("    int {} = {};\n", g.0, g.1);
     }
+    for p in priors {
+        globals += &format!("    {}\n", p);
+    }
 
     SFunction {
         name,
@@ -778,10 +790,11 @@ fn gen_single_stage_kernel(
         }
         expr
     };
+    let priors = eqd.priors.join("\n    ");
     SKernel {
         name: name.to_string(),
         args,
-        src: format!("    uint _i = {};\n{}", id, expr),
+        src: format!("    {}uint _i = {};\n{}", priors, id, expr),
         needed: vec![],
     }
 }
@@ -914,7 +927,7 @@ fn parse_symbols(
         let mut equations = vec![];
 
         macro_rules! parse {
-            ($j:ident $nj:ident, $src:ident, $current_var:expr) => {{
+            ($j:ident $nj:ident, $src:ident, $current_var:expr, $compact:expr) => {{
                 let mut parsed = parse(
                     &dpdes,
                     &$current_var.and_then(|name: &String| {
@@ -935,6 +948,7 @@ fn parse_symbols(
                     lexer_idx,
                     global_dim,
                     &$src,
+                    $compact,
                 )
                 .expect(&format!(
                     "Parse error in sub-process {} line{}:\n|------------\n{}\n|------------\n",
@@ -948,7 +962,7 @@ fn parse_symbols(
                 ));
                 lexer_idx += parsed.funs.len();
                 func.append(&mut parsed.funs);
-                parsed.ocl
+                (parsed.ocl, parsed.priors)
             }};
         }
 
@@ -958,7 +972,7 @@ fn parse_symbols(
                 let name = caps[1].into();
                 let mut src = replace(&caps[3], &consts);
                 if &caps[2] != ":" {
-                    let mut res = parse!(j nj, src, None);
+                    let mut res = parse!(j nj, src, None, false).0;
                     if res.len() == 1 {
                         src = format!("({})", res.pop().unwrap());
                     } else {
@@ -984,8 +998,10 @@ fn parse_symbols(
                     })
                     .collect();
                 let mut src = replace(&caps[4], &consts);
+                let mut priors = None;
                 if &caps[3] != ":" {
-                    let mut res = parse!(j nj, src, None);
+                    let (mut res, p) = parse!(j nj, src, None, true);
+                    priors = Some(p);
                     if res.len() == 1 {
                         src = res.pop().unwrap();
                     } else {
@@ -994,16 +1010,16 @@ fn parse_symbols(
                     );
                     }
                 }
-                func.push(gen_func(name, args, src));
+                func.push(gen_func(name, args, src, priors.unwrap_or_default()));
                 found = true;
             }
             macro_rules! beg {
-                ($search:ident $arr:ident, $name:ident, $expr:ident, $val:expr) => {
+                ($search:ident $arr:ident, $name:ident, $expr:ident, $priors:ident, $val:expr) => {
                     if let Some(caps) = $search.captures(&l) {
                         let $name = caps[1].into();
                         let src = replace(&caps[3], &consts);
                 let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
-                        let $expr = if &caps[2] == ":" {
+                        let ($expr,$priors) = if &caps[2] == ":" {
                             if src.starts_with("(") && src.ends_with(")") {
                                 let expr = src[1..src.len() - 1]
                                     .split(";")
@@ -1017,24 +1033,24 @@ fn parse_symbols(
                                         expr.len()
                                     );
                                 }
-                                expr
+                                (expr,vec![])
                             } else {
-                                vec![src]
+                                (vec![src],vec![])
                             }
                         } else {
-                            parse!(j nj, src, Some(&$name))
+                            parse!(j nj, src, Some(&$name), true)
                         };
                         $arr.push($val);
                         found = true;
                     }
                 };
-                ($search:ident $arr:ident, $name:ident, $expr:ident, $i:ident, $val:expr) => {
+                ($search:ident $arr:ident, $name:ident, $expr:ident, $priors:ident, $i:ident, $val:expr) => {
                     if let Some(caps) = $search.captures(&l) {
                         let $name = caps[1].into();
                         let $i = caps[2].parse::<u32>().unwrap();
                         let src = replace(&caps[4], &consts);
                 let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
-                        let $expr = if &caps[3] == ":" {
+                        let ($expr,$priors) = if &caps[3] == ":" {
                             if src.starts_with("(") && src.ends_with(")") {
                                 let expr = src[1..src.len() - 1]
                                     .split(";")
@@ -1048,12 +1064,12 @@ fn parse_symbols(
                                         expr.len()
                                     );
                                 }
-                                expr
+                                (expr,vec![])
                             } else {
-                                vec![src]
+                                (vec![src],vec![])
                             }
                         } else {
-                            parse!(j nj, src, Some(&$name))
+                            parse!(j nj, src, Some(&$name),true)
                         };
                         $arr.push($val);
                         found = true;
@@ -1062,13 +1078,13 @@ fn parse_symbols(
             }
             macro_rules! equ {
                 ($search:ident $arr:ident) => {
-                    beg!($search $arr, name, expr, EqDescriptor { name, expr });
+                    beg!($search $arr, name, expr, priors, EqDescriptor { name, expr, priors });
                 };
                 ($search:ident $arr:ident, $step:expr) => {
-                    beg!($search $arr, name, expr, SPDE {dvar: name,expr,step: $step});
+                    beg!($search $arr, name, expr, priors, SPDE {dvar: name,expr, priors,step: $step});
                 };
                 ($search:ident $arr:ident, $i:ident $step:expr) => {
-                    beg!($search $arr, name, expr, $i, SPDE {dvar: name,expr,step: $step});
+                    beg!($search $arr, name, expr, priors, $i, SPDE {dvar: name,expr, priors,step: $step});
                 };
             }
             equ! {search_init init}
@@ -1076,7 +1092,7 @@ fn parse_symbols(
             equ! {search_eqpde pdes, STEP::EQPDE}
             equ! {search_betweenpde pdes, i STEP::BETWEENPDE(i)}
             equ! {search_e equations}
-            if !found && !search_empty.is_match(&l) {
+            if !found && !search_empty.is_match(l) {
                 panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
             }
         };
@@ -1086,7 +1102,7 @@ fn parse_symbols(
         let mut j = 0;
         let mut nj = 0;
         for (cj, cl) in symbols.lines().enumerate() {
-            if cl.contains("=") {
+            if cl.contains('=') {
                 if !first {
                     doit(j, nj, &l);
                 } else {
@@ -1095,7 +1111,7 @@ fn parse_symbols(
                 l = cl.into();
                 j = cj;
             } else {
-                l += cl.into();
+                l += cl;
             }
             nj = cj;
         }

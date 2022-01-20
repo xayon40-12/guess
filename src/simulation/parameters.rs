@@ -10,6 +10,7 @@ pub use activations::ActivationCallback;
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct EqDescriptor {
     pub name: String,
+    pub priors: Vec<String>,
     pub expr: Vec<String>,
 }
 

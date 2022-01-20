@@ -23,6 +23,7 @@ pub enum STEP {
 pub struct SPDE {
     pub dvar: String,
     pub expr: Vec<String>, //one String for each dimension of the vectorial pde
+    pub priors: Vec<String>,
     pub step: STEP,
 }
 
@@ -109,11 +110,12 @@ fn multistages_kernels(
             for i in 0..len {
                 expr += &format!("    dst[{i}+_i] = {};\n", &d.expr[i], i = i);
             }
+            let priors = d.priors.join("\n    ");
             NewKernel(
                 (&Kernel {
                     name: &format!("{}_{}", &name, &d.dvar),
                     args: args.clone(),
-                    src: &format!("    uint _i = {};\n{}", id, expr),
+                    src: &format!("    {}\n    uint _i = {};\n{}", priors, id, expr),
                     needed: vec![],
                 })
                     .into(),
