@@ -298,7 +298,7 @@ impl SPDETokens {
                     empty(format!("{}()", n))
                 } else {
                     let mut b = a.into_iter().map(|i| ocl(i)).collect::<Vec<_>>();
-                    let a = b.pop().unwrap();
+                    let a = b.remove(0);
                     let r = b.into_iter().fold(a, |acc, i| {
                         app2(fuse(acc, i), &|(a, b)| format!("{},{}", a, b))
                     });

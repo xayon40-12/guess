@@ -794,7 +794,7 @@ fn gen_single_stage_kernel(
     SKernel {
         name: name.to_string(),
         args,
-        src: format!("    {}uint _i = {};\n{}", priors, id, expr),
+        src: format!("    {}\n    uint _i = {};\n{}", priors, id, expr),
         needed: vec![],
     }
 }
