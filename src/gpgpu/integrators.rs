@@ -60,7 +60,7 @@ pub fn create_projector_corrector_pde(
         needed_buffers,
         params,
         dt,
-        vec![vec![1.0], vec![0.5, 0.5]],
+        vec![vec![0.5], vec![0.0, 1.0]],
     )
 }
 pub fn create_rk4_pde(
