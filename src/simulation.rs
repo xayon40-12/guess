@@ -910,9 +910,9 @@ fn parse_symbols(
     periodic2(_x,_y,_w,_w_size,*u) := u[w + w_size*(modx + x_size*mody)]
     periodic3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(modx + x_size*(mody + y_size*modz))]
     periodic({c}_w,_w_size,*u) := periodic{n}({p}w,w_size,u)
-    ghostx := (x<0 ? 0 : (x>=x_size ? x_size-1 : x))
-    ghosty := (y<0 ? 0 : (y>=y_size ? y_size-1 : y))
-    ghostz := (z<0 ? 0 : (z>=z_size ? z_size-1 : z))
+    ghostx := (x<0 ? -x : (x>=x_size ? 2*(x_size-1)-x : x))
+    ghosty := (y<0 ? -y : (y>=y_size ? 2*(y_size-1)-y : y))
+    ghostz := (z<0 ? -z : (z>=z_size ? 2*(z_size-1)-z : z))
     ghost1(_x,_w,_w_size,*u) := u[w + w_size*ghostx]
     ghost2(_x,_y,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*ghosty)]
     ghost3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*(ghosty + y_size*ghostz))]
