@@ -153,6 +153,7 @@ pub fn null_if_nan(x: f64) -> f64 {
 pub fn fix_newton<'a>(
     name: &'a str,
     f: &'a str,
+    constraint: &'a str,
     extra_param_f: &'a [&'a str],
     e: f64,
     max_iter: u32,
@@ -178,9 +179,9 @@ pub fn fix_newton<'a>(
     do{{
         v = {f}(x{extra});
         old = x;
-        x -= v*x*e/({f}(x*(1+e){extra})-v);
+        x = {constraint}(x-v*x*e/({f}(x*(1+e){extra})-v){extra});
         i++;
-    }}while(i<{max} && fabs(old-x)>fabs(x*e));
+    }}while(i<{max} && fabs(v) > e); // fabs(old-x)>fabs(x*e));
     if (i=={max}) {{
         return 0.0/0.0;
     }}
@@ -188,6 +189,7 @@ pub fn fix_newton<'a>(
             e,
             max = max_iter,
             f = f,
+            constraint = constraint,
             extra = extra
         ),
         needed: vec![Needed::FuncName(&f)],
@@ -215,7 +217,14 @@ fn function_test() -> crate::gpgpu::Result<()> {
             src: "    return x*x - a;",
             needed: vec![],
         })
-        .create_function(fix_newton("fix", "f", &["a"], 1e-4, 1000))
+        .create_function(Function {
+            name: "c",
+            args: vec![FCParam("x", CF64), FCParam("a", CF64)],
+            ret_type: Some(CF64),
+            src: "    return (x<0?0:x);",
+            needed: vec![],
+        })
+        .create_function(fix_newton("fix", "f", "c", &["a"], 1e-3, 1000))
         .create_kernel(&Kernel {
             name: "_main",
             src: "    double a = u[x];

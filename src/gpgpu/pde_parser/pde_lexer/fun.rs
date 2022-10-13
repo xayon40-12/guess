@@ -33,7 +33,7 @@ use super::stag;
 use super::var::aanum;
 use super::CURRENT_VAR;
 
-// fix[e,max_iter]<func_name, init>(params...)
+// fix[e,max_iter]<func_name, constraint_name, init>(params...)
 pub fn fix(s: &str) -> IResult<&str, LexerComp> {
     let e = preceded(tag("e="), double);
     let max_iter = preceded(tag("max_iter="), u32);
@@ -42,14 +42,18 @@ pub fn fix(s: &str) -> IResult<&str, LexerComp> {
         tuple((opt(e), opt(preceded(tag(","), max_iter)))),
         char(']'),
     );
-    let init = delimited(char('<'), pair(aanum, preceded(stag(","), expr)), char('>'));
+    let init = delimited(
+        char('<'),
+        tuple((aanum, preceded(stag(","), aanum), preceded(stag(","), expr))),
+        char('>'),
+    );
     let args = delimited(char('('), separated_list1(stag(","), expr), char(')'));
     tuple((tag("fix"), opt(param), init, opt(args)))(s)
         .map(|(s, (_, p, i, a))| (s, fix_constructor(p, i, a)))
 }
 fn fix_constructor(
     params: Option<(Option<f64>, Option<u32>)>,
-    (fun_name, init): (String, LexerComp),
+    (fun_name, constraint_name, init): (String, String, LexerComp),
     args: Option<Vec<LexerComp>>,
 ) -> LexerComp {
     let novec = |mut i: Vec<String>| {
@@ -84,7 +88,14 @@ fn fix_constructor(
             (1e-3, 1000)
         };
         let name = format!("_{}_fix", id);
-        let fix = fix_newton(&name, &fun_name, &newton_names[..], e, max_iter);
+        let fix = fix_newton(
+            &name,
+            &fun_name,
+            &constraint_name,
+            &newton_names[..],
+            e,
+            max_iter,
+        );
         LexerComp {
             token: func(&name, next),
             funs: vec![fix],
