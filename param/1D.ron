@@ -14,7 +14,7 @@ Param(
     T = 0.15
     nc = 0.333333
     ivnc = 3
-    nb' = D*m2(T)*ivnc*#^2nb + sqrt(2*D*nc*ivdx*ivdt)*# xi
+    nb' = D*m2(T)*ivnc*#^2nb + sqrt(2*D*nc*ivdx/dt)*# xi
     *nb = nc",
   ],
 )

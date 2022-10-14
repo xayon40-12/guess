@@ -5,7 +5,7 @@ Param(
     //(Correlation(["nb"],Radial), At(3)),
   ],
   config: (t_0: Some(0), t_max: 3, dim: D3S((32,10))),
-  integrator: RK4(dt: 1e-3),
+  integrator: Explicit(RK4(dt: 1e-3)),
   noises: Some([Normal(name: "xi", dim: Some(3))]),
   symbols: [
     "nc = 0.333333
