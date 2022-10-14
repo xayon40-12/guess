@@ -1,7 +1,3 @@
-use crate::gpgpu::algorithms::{
-    AlgorithmParam, SAlgorithm,
-    SNeeded::{self, *},
-};
 use crate::gpgpu::descriptors::{ConstructorTypes, Types};
 use crate::gpgpu::descriptors::{ConstructorTypes::*, KernelArg::*, KernelConstructor::*};
 use crate::gpgpu::dim::{
@@ -10,6 +6,13 @@ use crate::gpgpu::dim::{
 };
 use crate::gpgpu::kernels::Kernel;
 use crate::gpgpu::Handler;
+use crate::{
+    gpgpu::algorithms::{
+        AlgorithmParam, SAlgorithm,
+        SNeeded::{self, *},
+    },
+    simulation::Integrator,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,27 +32,25 @@ pub struct SPDE {
 
 pub struct IntegratorParam {
     pub t: f64,
-    pub increment_name: String,
+    pub t_name: String,
+    pub dt: f64,
+    pub dt_name: String,
     pub args: Vec<(String, Types)>,
 }
 
 // Each PDE must be first order in time. A higher order PDE can be cut in multiple first order PDE.
 // Example: d2u/dt2 + du/dt = u   =>   du/dt = z, dz/dt = u.
 // It is why the parameter pdes is a Vec.
-pub type CreatePDE =
-    fn(&str, f64, Vec<SPDE>, Option<Vec<String>>, Vec<(String, ConstructorTypes)>) -> SAlgorithm;
+pub type CreatePDE = fn(
+    &str,
+    Integrator,
+    Vec<SPDE>,
+    Option<Vec<String>>,
+    Vec<(String, ConstructorTypes)>,
+) -> SAlgorithm;
 pub fn create_euler_pde(
     name: &str,
-    dt: f64,
-    pdes: Vec<SPDE>,
-    needed_buffers: Option<Vec<String>>,
-    params: Vec<(String, ConstructorTypes)>,
-) -> SAlgorithm {
-    multistages_algorithm(name, &pdes, needed_buffers, params, dt, vec![vec![1.0]])
-}
-pub fn create_projector_corrector_pde(
-    name: &str,
-    dt: f64,
+    integrator: Integrator,
     pdes: Vec<SPDE>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
@@ -59,13 +60,29 @@ pub fn create_projector_corrector_pde(
         &pdes,
         needed_buffers,
         params,
-        dt,
+        integrator,
+        vec![vec![1.0]],
+    )
+}
+pub fn create_projector_corrector_pde(
+    name: &str,
+    integrator: Integrator,
+    pdes: Vec<SPDE>,
+    needed_buffers: Option<Vec<String>>,
+    params: Vec<(String, ConstructorTypes)>,
+) -> SAlgorithm {
+    multistages_algorithm(
+        name,
+        &pdes,
+        needed_buffers,
+        params,
+        integrator,
         vec![vec![0.5], vec![0.0, 1.0]],
     )
 }
 pub fn create_rk4_pde(
     name: &str,
-    dt: f64,
+    integrator: Integrator,
     pdes: Vec<SPDE>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
@@ -75,12 +92,34 @@ pub fn create_rk4_pde(
         &pdes,
         needed_buffers,
         params,
-        dt,
+        integrator,
         vec![
             vec![0.5],
             vec![0.0, 0.5],
             vec![0.0, 0.0, 1.0],
             vec![1. / 6., 1. / 3., 1. / 3., 1. / 6.],
+        ],
+    )
+}
+
+pub fn create_implicit_radau_pde(
+    name: &str,
+    integrator: Integrator,
+    pdes: Vec<SPDE>,
+    needed_buffers: Option<Vec<String>>,
+    params: Vec<(String, ConstructorTypes)>,
+) -> SAlgorithm {
+    multistages_algorithm(
+        name,
+        &pdes,
+        needed_buffers,
+        params,
+        integrator,
+        vec![
+            vec![5.0 / 12.0, -1.0 / 12.0],
+            vec![3.0 / 4.0, 1.0 / 4.0],
+            vec![3.0 / 4.0, 1.0 / 4.0],
+            vec![1.0, 0.0],
         ],
     )
 }
@@ -174,7 +213,7 @@ fn multistages_algorithm(
     pdes: &Vec<SPDE>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
-    dt: f64,
+    integrator: Integrator,
     stages: Vec<Vec<f64>>,
 ) -> SAlgorithm {
     let name = name.to_string();
@@ -245,7 +284,7 @@ fn multistages_algorithm(
                         &name, &len
                     );
                 }
-                let IntegratorParam{t,ref increment_name,args: iargs} = other
+                let IntegratorParam{t,ref t_name,dt, ref dt_name,args: iargs} = other
                 .downcast_ref("There must be an Ref(&IntegratorParam) given as optional argument in Multistages integrator algorithm.");
                 let mut args = vec![BufArg("", ""); vars.len() + 1];
                 if let Some(ns) = &needed_buffers {
@@ -256,7 +295,8 @@ fn multistages_algorithm(
                     }
                 }
                 args.extend(iargs.iter().map(|i| Param(&i.0, i.1)));
-                args.push(Param(increment_name, (*t).into()));
+                args.push(Param(t_name, (*t).into()));
+                args.push(Param(dt_name, (*dt).into()));
                 let time_id = args.len() - 1;
                 let argnames = (0..nb_per_stages)
                     .map(|i| format!("src{}", i))
@@ -281,10 +321,9 @@ fn multistages_algorithm(
                             }
                             h.run_arg(&vars[i].0, dim, &args)?;
                         }
-                        args[time_id] = Param(
-                            increment_name,
-                            (*t + stages[s].iter().fold(0.0, |a, i| a + i) * dt).into(),
-                        ); // increment time for next stage
+                        let cdt = stages[s].iter().fold(0.0, |a, i| a + i) * dt;
+                        args[time_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
+                        args[time_id] = Param(dt_name, cdt.into()); // increment time for next stage
                         r.iter().for_each(|i| pred.push(*i));
                         for &i in r {
                             let mut stage_args = vec![
@@ -294,7 +333,7 @@ fn multistages_algorithm(
                                     "dst",
                                 ),
                                 BufArg(&bufs[nb_per_stages * i], "src"),
-                                Param("h", dt.into()),
+                                Param("h", (*dt).into()),
                             ];
                             stage_args.extend(
                                 (0..s + 1).map(|j| {

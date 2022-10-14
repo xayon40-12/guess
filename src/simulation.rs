@@ -6,8 +6,8 @@ use crate::gpgpu::descriptors::{
 };
 use crate::gpgpu::functions::SFunction;
 use crate::gpgpu::integrators::{
-    create_euler_pde, create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam,
-    SPDE, STEP,
+    create_euler_pde, create_implicit_radau_pde, create_projector_corrector_pde, create_rk4_pde,
+    CreatePDE, IntegratorParam, SPDE, STEP,
 };
 use crate::gpgpu::kernels::SKernel;
 use crate::gpgpu::pde_parser::{pde_ir::Indexable, DPDE};
@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod parameters;
 use parameters::Noises::{self, *};
 pub use parameters::{
-    ActivationCallback, Callback, EqDescriptor, Integrator, Param,
+    ActivationCallback, Callback, EqDescriptor, Explicit, Implicit, Integrator, Param,
     PrmType::{self, *},
 };
 
@@ -48,6 +48,8 @@ pub struct EquationKernel {
 pub struct Vars {
     pub t_0: f64,
     pub t_max: f64,
+    pub dt_0: f64,
+    pub dt_max: f64,
     pub dim: Dim,
     pub phy: [f64; 3],
     pub dirs: Vec<DimDir>,
@@ -56,7 +58,6 @@ pub struct Vars {
     pub stages: Vec<(Option<(String, Vec<String>)>, Vec<EquationKernel>)>,
     pub noises: Option<Vec<Noises>>,
     pub parent: String,
-    pub dt: f64,
 }
 
 pub struct Simulation {
@@ -188,6 +189,8 @@ impl Simulation {
         let Vars {
             t_0,
             t_max,
+            dt_0,
+            dt_max: _,
             dim,
             dirs: _,
             len,
@@ -196,13 +199,14 @@ impl Simulation {
             ref noises,
             phy: _,
             parent: _,
-            dt,
         } = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
 
         let mut intprm = IntegratorParam {
             t: t_0,
-            increment_name: "t".to_string(),
+            t_name: "t".to_string(),
+            dt: dt_0,
+            dt_name: "dt".to_string(),
             args: vec![],
         };
         for (activator, callback) in &mut self.callbacks {
@@ -260,7 +264,7 @@ impl Simulation {
                 }
             }
             //WARNING,TODO time t incremented only after each subprocesses, consider if it needs to be incremented per subprocess
-            intprm.t += dt;
+            intprm.t += intprm.dt;
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
@@ -351,14 +355,19 @@ fn extract_symbols(
     consts.insert("dxyz".to_string(), dxyz.to_string());
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
-    let (nb_stages, dt, creator): (usize, f64, CreatePDE) = match &param.integrator {
-        Integrator::Euler { dt } => (1, *dt, create_euler_pde),
-        Integrator::PC { dt } => (2, *dt, create_projector_corrector_pde),
-        Integrator::RK4 { dt } => (4, *dt, create_rk4_pde),
-    };
-
-    consts.insert("dt".to_string(), format!("{:e}", dt));
-    consts.insert("ivdt".to_string(), format!("{:e}", 1.0 / dt));
+    let (nb_stages, dt_0, dt_max, _er, creator): (usize, f64, f64, f64, CreatePDE) =
+        match &param.integrator {
+            Integrator::Explicit(e) => match e {
+                Explicit::Euler { dt } => (1, *dt, *dt, 0.0, create_euler_pde),
+                Explicit::PC { dt } => (2, *dt, *dt, 0.0, create_projector_corrector_pde),
+                Explicit::RK4 { dt } => (4, *dt, *dt, 0.0, create_rk4_pde),
+            },
+            Integrator::Implicit(i) => match i {
+                Implicit::RadauIIA2 { dt_0, dt_max, er } => {
+                    (2, *dt_0, *dt_max, *er, create_implicit_radau_pde)
+                }
+            },
+        };
 
     let mut noises_names = HashSet::new();
     let mut dpdes = param
@@ -443,10 +452,10 @@ fn extract_symbols(
             let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
             h = h.create_algorithm(creator(
                 integrator,
-                dt,
+                param.integrator.clone(),
                 pdes,
                 Some(others),
-                vec![("t".into(), CF64)],
+                vec![("t".into(), CF64), ("dt".into(), CF64)],
             ));
             let mut buffers = pde_buffers
                 .iter()
@@ -699,6 +708,8 @@ fn extract_symbols(
     let vars = Vars {
         t_0,
         t_max,
+        dt_0,
+        dt_max,
         dim,
         dirs,
         len,
@@ -707,12 +718,11 @@ fn extract_symbols(
         noises: param.noises,
         phy,
         parent,
-        dt,
     };
     let callbacks = param
         .actions
         .into_iter()
-        .map(|(c, a)| (a.to_activation(dt), c.to_callback(&name_to_index, num_pdes)))
+        .map(|(c, a)| (a.to_activation(), c.to_callback(&name_to_index, num_pdes)))
         .collect();
 
     Ok(Some(Simulation {

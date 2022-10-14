@@ -12,7 +12,7 @@ pub use Repetition::*;
 pub type ActivationCallback = Box<dyn FnMut(f64) -> bool>;
 
 impl Repetition {
-    pub fn to_activation(self, dt: f64) -> ActivationCallback {
+    pub fn to_activation(self) -> ActivationCallback {
         match self {
             At(at) => {
                 let mut done = false;
@@ -39,7 +39,7 @@ impl Repetition {
             Interval { from, to, every } => {
                 let mut next = from;
                 Box::new(move |t| {
-                    if t < to + dt && t >= next {
+                    if t <= to && t >= next {
                         next = t - (t - next) % every + every;
                         true
                     } else {
@@ -52,7 +52,7 @@ impl Repetition {
                 let every = (to - from) / total;
                 let mut next = from;
                 Box::new(move |t| {
-                    if t < to + dt && t >= next {
+                    if t <= to && t >= next {
                         next = t - (t - next) % every + every;
                         true
                     } else {

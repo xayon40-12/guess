@@ -23,9 +23,20 @@ pub enum PrmType {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Integrator {
+    Explicit(Explicit),
+    Implicit(Implicit),
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum Explicit {
     Euler { dt: f64 },
     PC { dt: f64 }, // ProjectorCorrector
     RK4 { dt: f64 },
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum Implicit {
+    RadauIIA2 { dt_0: f64, dt_max: f64, er: f64 },
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
