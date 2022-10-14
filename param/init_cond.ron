@@ -2,7 +2,7 @@ Param(
   initial_conditions_file: Some("init_cond.init"),
   data_files: Some(["m2.txt"]),
   actions: [
-    (Moments(["u"]), TotalInterval(from: 0, to: 3, total: 1000)),
+    (RawData(["u", "v"]), TotalInterval(from: 0, to: 3, total: 1000)),
   ],
   config: (t_0: Some(0), t_max: 3.1, dim: D1((8,1))),
   integrator: Explicit(Euler(dt: 1e-3)),

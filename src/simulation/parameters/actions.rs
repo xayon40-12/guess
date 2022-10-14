@@ -1,8 +1,8 @@
-use crate::simulation::Vars;
 use crate::gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
 use crate::gpgpu::descriptors::KernelArg::*;
 use crate::gpgpu::kernels::{radial, Origin, Radial};
 use crate::gpgpu::{Dim::*, DimDir::*};
+use crate::simulation::Vars;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -24,7 +24,8 @@ pub enum Action {
 }
 pub use Action::*;
 
-pub type Callback = Box<dyn FnMut(&mut crate::gpgpu::Handler, &Vars, f64) -> crate::gpgpu::Result<()>>;
+pub type Callback =
+    Box<dyn FnMut(&mut crate::gpgpu::Handler, &Vars, f64) -> crate::gpgpu::Result<()>>;
 
 fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
     let write = |f, c: &str| {
@@ -103,13 +104,13 @@ fn vvtos<T, F: Fn(&[T]) -> String>(v: &[T], w: usize, f: F) -> String {
     v.chunks(w).map(|i| f(i)).collect::<Vec<_>>().join(" ")
 }
 fn venot(v: &[f64]) -> String {
-    v.iter().map(enot).collect::<Vec<_>>().join(":")
+    v.iter().map(enot).collect::<Vec<_>>().join(";")
 }
 fn enot(v: &f64) -> String {
     format!("{:e}", v)
 }
 fn renot(v: &Radial) -> String {
-    format!("{:e};{}", v.pos, venot(&v.vals)) // <coord>;<number>
+    format!("{:e}:{}", v.pos, venot(&v.vals)) // <coord>;<number>
 }
 fn cenot(v: &[f64; 2]) -> String {
     format!("{:e}j{:e}", v[0], v[1]) // complex number <real>j<imaginary>
