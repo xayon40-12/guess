@@ -464,9 +464,7 @@ fn extract_symbols(
                     for j in 0..nb_stages {
                         pde.push(format!("tmp_dvar_{}_k{}", name, (j + 1)));
                     }
-                    if nb_stages > 1 {
-                        pde.push(format!("tmp_dvar_{}_tmp", name));
-                    }
+                    pde.push(format!("tmp_dvar_{}_tmp", name));
                     pde
                 })
                 .collect::<Vec<_>>();
@@ -563,7 +561,7 @@ fn extract_symbols(
     dvars.iter_mut().for_each(|i| {
         max = usize::max(max, i.1);
         name_to_index.insert(i.0.clone(), index);
-        index += if nb_stages > 1 { 2 } else { 1 } + nb_stages;
+        index += 2 + nb_stages;
         i.0 = format!("dvar_{}", i.0);
     });
     for dvar in &dvars {
@@ -582,9 +580,7 @@ fn extract_symbols(
                     Len(F64(0.0), len * dvar.1),
                 );
             }
-            if nb_stages > 1 {
-                h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
-            }
+            h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
         }
     }
     if init_file.len() > 0 {
@@ -595,9 +591,7 @@ fn extract_symbols(
         for j in 0..nb_stages {
             vars.push((format!("tmp_{}_k{}", &i.0, (j + 1)), i.1));
         }
-        if nb_stages > 1 {
-            vars.push((format!("tmp_{}_tmp", &i.0), i.1));
-        }
+        vars.push((format!("tmp_{}_tmp", &i.0), i.1));
         vars.into_iter()
     };
     let mut dvars = dvars.into_iter().flat_map(renaming).collect::<Vec<_>>();

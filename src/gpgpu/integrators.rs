@@ -30,12 +30,37 @@ pub struct SPDE {
     pub step: STEP,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IntegratorParam {
     pub t: f64,
     pub t_name: String,
     pub dt: f64,
     pub dt_name: String,
     pub args: Vec<(String, Types)>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Scheme {
+    pub aij: Vec<Vec<f64>>,
+    pub bj: Vec<f64>,
+    pub bjs: Option<Vec<f64>>,
+}
+
+impl Scheme {
+    pub fn check(&self) -> bool {
+        let l = self.aij.len();
+        for c in &self.aij {
+            if c.len() != l {
+                return false;
+            }
+        }
+        if let Some(bjs) = &self.bjs {
+            if bjs.len() != l {
+                return false;
+            }
+        }
+        self.bj.len() == l
+    }
 }
 
 // Each PDE must be first order in time. A higher order PDE can be cut in multiple first order PDE.
@@ -61,7 +86,11 @@ pub fn create_euler_pde(
         needed_buffers,
         params,
         integrator,
-        vec![vec![1.0]],
+        Scheme {
+            aij: vec![vec![0.0]],
+            bj: vec![1.0],
+            bjs: None,
+        },
     )
 }
 pub fn create_projector_corrector_pde(
@@ -77,7 +106,11 @@ pub fn create_projector_corrector_pde(
         needed_buffers,
         params,
         integrator,
-        vec![vec![0.5], vec![0.0, 1.0]],
+        Scheme {
+            aij: vec![vec![0.0, 0.0], vec![0.5, 0.0]],
+            bj: vec![0.0, 1.0],
+            bjs: None,
+        },
     )
 }
 pub fn create_rk4_pde(
@@ -93,12 +126,16 @@ pub fn create_rk4_pde(
         needed_buffers,
         params,
         integrator,
-        vec![
-            vec![0.5],
-            vec![0.0, 0.5],
-            vec![0.0, 0.0, 1.0],
-            vec![1. / 6., 1. / 3., 1. / 3., 1. / 6.],
-        ],
+        Scheme {
+            aij: vec![
+                vec![0.0, 0.0, 0.0, 0.0],
+                vec![0.5, 0.0, 0.0, 0.0],
+                vec![0.0, 0.5, 0.0, 0.0],
+                vec![0.0, 0.0, 1.0, 0.0],
+            ],
+            bj: vec![1. / 6., 1. / 3., 1. / 3., 1. / 6.],
+            bjs: None,
+        },
     )
 }
 
@@ -115,12 +152,11 @@ pub fn create_implicit_radau_pde(
         needed_buffers,
         params,
         integrator,
-        vec![
-            vec![5.0 / 12.0, -1.0 / 12.0],
-            vec![3.0 / 4.0, 1.0 / 4.0],
-            vec![3.0 / 4.0, 1.0 / 4.0],
-            vec![1.0, 0.0],
-        ],
+        Scheme {
+            aij: vec![vec![5.0 / 12.0, -1.0 / 12.0], vec![3.0 / 4.0, 1.0 / 4.0]],
+            bj: vec![3.0 / 4.0, 1.0 / 4.0],
+            bjs: Some(vec![1.0, 0.0]),
+        },
     )
 }
 
@@ -129,7 +165,7 @@ fn multistages_kernels(
     pdes: &Vec<SPDE>,
     needed_buffers: &Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
-    stages: &Vec<Vec<f64>>,
+    scheme: &Scheme,
 ) -> Vec<SNeeded> {
     let mut args = vec![KCBuffer("dst", CF64)];
     args.extend(pdes.iter().map(|pde| KCBuffer(&pde.dvar, CF64)));
@@ -161,7 +197,7 @@ fn multistages_kernels(
             )
         })
         .collect::<Vec<_>>();
-    for (i, v) in stages.iter().enumerate() {
+    for (i, v) in scheme.aij.iter().chain([&scheme.bj]).enumerate() {
         let mut args = vec![
             KCBuffer("dst", CF64),
             KCBuffer("src", CF64),
@@ -177,13 +213,18 @@ fn multistages_kernels(
                 src = format!("{} + {}*{}[i]", src, v, &argnames[i]);
             }
         }
-        src = format!(
-            "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = src[i] + h*({});",
-            &src[3..]
-        );
+        if src.is_empty() {
+            src = "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = src[i];".to_string();
+        } else {
+            src = format!(
+                "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = src[i] + h*({});",
+                &src[3..]
+            );
+        }
+        let eq_i = if i == v.len() { i - 1 } else { i }; // the last stage (using the bi) correspond to i=nb_stages=v.len(), so at that point, the last stage should be chosen for eq so nb_stages-1
         let src_eq = format!(
             "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = {}[i];",
-            &argnames[i] // TODO: optimize: use argnames[0] here and in multistages_algorithm for eq, then only alocate one buffer for them
+            &argnames[eq_i] // TODO: optimize: use argnames[0] here and in multistages_algorithm for eq, then only alocate one buffer for them
         );
 
         needed.push(NewKernel(
@@ -214,7 +255,7 @@ fn multistages_algorithm(
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
     integrator: Integrator,
-    stages: Vec<Vec<f64>>,
+    scheme: Scheme,
 ) -> SAlgorithm {
     let name = name.to_string();
     let vars = pdes
@@ -249,21 +290,19 @@ fn multistages_algorithm(
                 (j, a)
             }
         });
-    let mut len = (if stages.len() > 1 { 2 } else { 1 } + stages.len()) * vars.len();
+    let nb_stages = scheme.aij.len(); // +1 for bij
+    let nb_per_stages = 2 + nb_stages;
+    let mut len = nb_per_stages * vars.len();
     let nb_pde_buffers = len;
     if let Some(ns) = &needed_buffers {
         len += ns.len();
     }
-    for (i, v) in stages.iter().enumerate() {
-        if v.len() != i + 1 {
-            panic!("In multisatges algorithm the coefficients must be given as a vector for each stages in the order, the first stage does not need a coefficent nor an empty, then each stage needs one more coefficient (3 coefficient for the fourth stage for instance) and the las vector correspond to how to sum each of the computed stages at the end thus it needs as many coefficient as there are stages.")
-        }
+    if !scheme.check() {
+        panic!("In a multistages algorithms the scheme must be well formed: the coefficient table 'aij' must be square along with the end sum vector 'bj' that must be the same length as the table. The second sum vuctor use to predict the time step must be the same size as well if provided.")
     }
 
-    let nb_per_stages = if stages.len() > 1 { 2 } else { 1 } + stages.len();
     let tmpid = nb_per_stages - 1;
-    let nb_stages = stages.len();
-    let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &stages);
+    let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme);
     SAlgorithm {
         name: name.clone(),
         callback: std::rc::Rc::new(
@@ -280,8 +319,8 @@ fn multistages_algorithm(
                 let d = _dim.iter().fold(1, |a, i| a * i);
                 if bufs.len() != len {
                     panic!(
-                        "Multistages algorithm \"{}\" must be given {} buffer arguments.",
-                        &name, &len
+                        "Multistages algorithm \"{}\" must be given {} buffer arguments, {} where given: {:?}.",
+                        &name, &len, &bufs.len(), &bufs
                     );
                 }
                 let IntegratorParam{t,ref t_name,dt, ref dt_name,args: iargs} = other
@@ -297,21 +336,54 @@ fn multistages_algorithm(
                 args.extend(iargs.iter().map(|i| Param(&i.0, i.1)));
                 args.push(Param(t_name, (*t).into()));
                 args.push(Param(dt_name, (*dt).into()));
-                let time_id = args.len() - 1;
+                let t_id = args.len() - 2;
+                let dt_id = args.len() - 1;
                 let argnames = (0..nb_per_stages)
                     .map(|i| format!("src{}", i))
                     .collect::<Vec<_>>();
+
+                macro_rules! stage {
+                    ($s:ident,$r:ident,$coef:expr) => {
+                    let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
+                    args[t_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
+                    args[dt_id] = Param(dt_name, cdt.into()); // increment time for next stage
+                    for &i in $r {
+                        let mut stage_args = vec![
+                            BufArg(
+                                &bufs[nb_per_stages * i
+                                    + if $s == nb_stages { 0 } else { tmpid }],
+                                "dst",
+                            ),
+                            BufArg(&bufs[nb_per_stages * i], "src"),
+                            Param("h", (*dt).into()),
+                        ];
+                        stage_args.extend(
+                            (0..nb_stages)
+                                .map(|j| BufArg(&bufs[nb_per_stages * i + (j + 1)], &argnames[j])),
+                        );
+                        let step = &vars[i].3;
+                        let stage_name = &match step {
+                            STEP::PDE => format!("{}_stage{}", name, $s),
+                            STEP::EQPDE | STEP::BETWEENPDE(_) => {
+                                format!("{}_stage{}_eq", name, $s)
+                            }
+                        };
+                        h.run_arg(stage_name, D1(d * vars[i].2), &stage_args)?;
+                        // vars[i].2 correspond to the vectorial dim of the current pde
+                    }
+                };
+                }
+
                 for s in 0..nb_stages {
                     let mut pred = vec![];
                     for r in &vars_ranges {
+                        stage!(s, r, scheme.aij[s]);
                         for &i in r {
                             args[0] = BufArg(&bufs[nb_per_stages * i + (s + 1)], "dst");
                             for i in 0..vars.len() {
                                 args[1 + i] = BufArg(
                                     &bufs[nb_per_stages * i
-                                        + if (s == 0 && !pred.contains(&i))
-                                            || (s == nb_stages - 1 && pred.contains(&i))
-                                        {
+                                        + if s == nb_stages - 1 && pred.contains(&i) {
                                             0
                                         } else {
                                             tmpid
@@ -321,36 +393,11 @@ fn multistages_algorithm(
                             }
                             h.run_arg(&vars[i].0, dim, &args)?;
                         }
-                        let cdt = stages[s].iter().fold(0.0, |a, i| a + i) * dt;
-                        args[time_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
-                        args[time_id] = Param(dt_name, cdt.into()); // increment time for next stage
                         r.iter().for_each(|i| pred.push(*i));
-                        for &i in r {
-                            let mut stage_args = vec![
-                                BufArg(
-                                    &bufs[nb_per_stages * i
-                                        + if s == nb_stages - 1 { 0 } else { tmpid }],
-                                    "dst",
-                                ),
-                                BufArg(&bufs[nb_per_stages * i], "src"),
-                                Param("h", (*dt).into()),
-                            ];
-                            stage_args.extend(
-                                (0..s + 1).map(|j| {
-                                    BufArg(&bufs[nb_per_stages * i + (j + 1)], &argnames[j])
-                                }),
-                            );
-                            let step = &vars[i].3;
-                            let stage_name = &match step {
-                                STEP::PDE => format!("{}_stage{}", name, s),
-                                STEP::EQPDE | STEP::BETWEENPDE(_) => {
-                                    format!("{}_stage{}_eq", name, s)
-                                }
-                            };
-                            h.run_arg(stage_name, D1(d * vars[i].2), &stage_args)?;
-                            // vars[i].2 correspond to the vectorial dim of the current pde
-                        }
                     }
+                }
+                for r in &vars_ranges {
+                    stage!(nb_stages, r, scheme.bj);
                 }
 
                 Ok(None)
