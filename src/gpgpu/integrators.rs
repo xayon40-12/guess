@@ -36,6 +36,7 @@ pub struct IntegratorParam {
     pub t_name: String,
     pub dt: f64,
     pub dt_name: String,
+    pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
     pub args: Vec<(String, Types)>,
 }
 
@@ -204,7 +205,7 @@ fn multistages_kernels(
             KCParam("h", CF64),
         ];
         let argnames = (0..v.len())
-            .map(|i| format!("src{}", i))
+            .map(|i| format!("src{}", i + 1))
             .collect::<Vec<_>>();
         let mut src = String::new();
         for (i, v) in v.iter().enumerate() {
@@ -323,7 +324,7 @@ fn multistages_algorithm(
                         &name, &len, &bufs.len(), &bufs
                     );
                 }
-                let IntegratorParam{t,ref t_name,dt, ref dt_name,args: iargs} = other
+                let IntegratorParam{t,ref t_name,dt, ref dt_name, ref cdt_name, args: iargs} = other
                 .downcast_ref("There must be an Ref(&IntegratorParam) given as optional argument in Multistages integrator algorithm.");
                 let mut args = vec![BufArg("", ""); vars.len() + 1];
                 if let Some(ns) = &needed_buffers {
@@ -336,17 +337,20 @@ fn multistages_algorithm(
                 args.extend(iargs.iter().map(|i| Param(&i.0, i.1)));
                 args.push(Param(t_name, (*t).into()));
                 args.push(Param(dt_name, (*dt).into()));
-                let t_id = args.len() - 2;
-                let dt_id = args.len() - 1;
+                args.push(Param(cdt_name, 0.into()));
+                let t_id = args.len() - 3;
+                let dt_id = args.len() - 2;
+                let cdt_id = args.len() - 1;
                 let argnames = (0..nb_per_stages)
-                    .map(|i| format!("src{}", i))
+                    .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr) => {
                     let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
                     args[t_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
-                    args[dt_id] = Param(dt_name, cdt.into()); // increment time for next stage
+                    args[dt_id] = Param(dt_name, (*dt).into()); // increment time for next stage
+                    args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
                     for &i in $r {
                         let mut stage_args = vec![
                             BufArg(
@@ -381,15 +385,12 @@ fn multistages_algorithm(
                         for &i in r {
                             args[0] = BufArg(&bufs[nb_per_stages * i + (s + 1)], "dst");
                             for i in 0..vars.len() {
-                                args[1 + i] = BufArg(
-                                    &bufs[nb_per_stages * i
-                                        + if s == nb_stages - 1 && pred.contains(&i) {
-                                            0
-                                        } else {
-                                            tmpid
-                                        }],
-                                    &vars[i].1,
-                                );
+                                let pos = if s == nb_stages - 1 && pred.contains(&i) {
+                                    0
+                                } else {
+                                    tmpid
+                                };
+                                args[1 + i] = BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
                             }
                             h.run_arg(&vars[i].0, dim, &args)?;
                         }

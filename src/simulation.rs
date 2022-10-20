@@ -207,6 +207,7 @@ impl Simulation {
             t_name: "t".to_string(),
             dt: dt_0,
             dt_name: "dt".to_string(),
+            cdt_name: "cdt".to_string(),
             args: vec![],
         };
         for (activator, callback) in &mut self.callbacks {
@@ -455,7 +456,11 @@ fn extract_symbols(
                 param.integrator.clone(),
                 pdes,
                 Some(others),
-                vec![("t".into(), CF64), ("dt".into(), CF64)],
+                vec![
+                    ("t".into(), CF64),
+                    ("dt".into(), CF64),
+                    ("cdt".into(), CF64),
+                ],
             ));
             let mut buffers = pde_buffers
                 .iter()
