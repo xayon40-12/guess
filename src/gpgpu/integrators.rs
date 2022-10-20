@@ -28,10 +28,12 @@ pub struct SPDE {
     pub expr: Vec<String>, //one String for each dimension of the vectorial pde
     pub priors: Vec<String>,
     pub step: STEP,
+    pub constraint: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IntegratorParam {
+    pub swap: usize,
     pub t: f64,
     pub t_name: String,
     pub dt: f64,
@@ -267,13 +269,14 @@ fn multistages_algorithm(
                 d.dvar.clone(),
                 d.expr.len(),
                 d.step.clone(),
+                d.constraint.clone(),
             )
         })
         .collect::<Vec<_>>();
     let mut vars_ranges = vars
         .iter()
         .enumerate()
-        .map(|(i, (_, _, _, s))| match s {
+        .map(|(i, (_, _, _, s, _))| match s {
             STEP::PDE | STEP::EQPDE | STEP::BETWEENPDE(0) => (0, i),
             STEP::BETWEENPDE(j) => (*j, i),
         })
@@ -292,7 +295,7 @@ fn multistages_algorithm(
             }
         });
     let nb_stages = scheme.aij.len(); // +1 for bij
-    let nb_per_stages = 2 + nb_stages;
+    let nb_per_stages = 3 + 2 * nb_stages;
     let mut len = nb_per_stages * vars.len();
     let nb_pde_buffers = len;
     if let Some(ns) = &needed_buffers {
@@ -303,6 +306,7 @@ fn multistages_algorithm(
     }
 
     let tmpid = nb_per_stages - 1;
+    let pre_constraint_id = nb_per_stages - 2;
     let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme);
     SAlgorithm {
         name: name.clone(),
@@ -324,7 +328,7 @@ fn multistages_algorithm(
                         &name, &len, &bufs.len(), &bufs
                     );
                 }
-                let IntegratorParam{t,ref t_name,dt, ref dt_name, ref cdt_name, args: iargs} = other
+                let IntegratorParam{swap, t,ref t_name,dt, ref dt_name, ref cdt_name, args: iargs} = other
                 .downcast_ref("There must be an Ref(&IntegratorParam) given as optional argument in Multistages integrator algorithm.");
                 let mut args = vec![BufArg("", ""); vars.len() + 1];
                 if let Some(ns) = &needed_buffers {
@@ -346,24 +350,21 @@ fn multistages_algorithm(
                     .collect::<Vec<_>>();
 
                 macro_rules! stage {
-                    ($s:ident,$r:ident,$coef:expr) => {
+                    ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                     let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
                     args[t_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
                     args[dt_id] = Param(dt_name, (*dt).into()); // increment time for next stage
                     args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
                     for &i in $r {
+                        let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
                         let mut stage_args = vec![
-                            BufArg(
-                                &bufs[nb_per_stages * i
-                                    + if $s == nb_stages { 0 } else { tmpid }],
-                                "dst",
-                            ),
-                            BufArg(&bufs[nb_per_stages * i], "src"),
+                            BufArg(dst_buf,"dst",),
+                            BufArg(&bufs[nb_per_stages * i ], "src"),
                             Param("h", (*dt).into()),
                         ];
                         stage_args.extend(
                             (0..nb_stages)
-                                .map(|j| BufArg(&bufs[nb_per_stages * i + (j + 1)], &argnames[j])),
+                                .map(|j| BufArg(&bufs[nb_per_stages * i + swap*nb_stages + (j + 1)], &argnames[j])),
                         );
                         let step = &vars[i].3;
                         let stage_name = &match step {
@@ -372,20 +373,38 @@ fn multistages_algorithm(
                                 format!("{}_stage{}_eq", name, $s)
                             }
                         };
+                        $pred.push(i);
                         h.run_arg(stage_name, D1(d * vars[i].2), &stage_args)?;
                         // vars[i].2 correspond to the vectorial dim of the current pde
+
+
+                        if let Some(constraint_name) = &vars[i].4 { // TODO: constraint_names[i]
+                            let mut constraint_args = vec![BufArg(dst_buf, "dst")];
+                            for i in 0..vars.len() {
+                                let pos = if $s == nb_stages && $pred.contains(&i) {
+                                    0
+                                } else {
+                                    tmpid
+                                }; //TODO: if vars[i] has constraint then read from pre_constraint_id
+                                constraint_args.push(BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1)); // WARNING: use a separate tmp buffer, else values will not be updated simultaneously
+                            }
+                            h.run_arg(constraint_name, D1(d * vars[i].2), &constraint_args)?;
+                        }
                     }
                 };
                 }
 
                 for s in 0..nb_stages {
-                    let mut pred = vec![];
                     for r in &vars_ranges {
-                        stage!(s, r, scheme.aij[s]);
+                        let mut pred = vec![];
+                        stage!(s, r, scheme.aij[s], pred);
                         for &i in r {
-                            args[0] = BufArg(&bufs[nb_per_stages * i + (s + 1)], "dst");
+                            args[0] = BufArg(
+                                &bufs[nb_per_stages * i + (1 - swap) * nb_stages + (s + 1)],
+                                "dst",
+                            );
                             for i in 0..vars.len() {
-                                let pos = if s == nb_stages - 1 && pred.contains(&i) {
+                                let pos = if s == 0 && !pred.contains(&i) {
                                     0
                                 } else {
                                     tmpid
@@ -394,11 +413,11 @@ fn multistages_algorithm(
                             }
                             h.run_arg(&vars[i].0, dim, &args)?;
                         }
-                        r.iter().for_each(|i| pred.push(*i));
                     }
                 }
                 for r in &vars_ranges {
-                    stage!(nb_stages, r, scheme.bj);
+                    let mut pred = vec![];
+                    stage!(nb_stages, r, scheme.bj, pred);
                 }
 
                 Ok(None)

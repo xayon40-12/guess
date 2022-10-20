@@ -203,6 +203,7 @@ impl Simulation {
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
 
         let mut intprm = IntegratorParam {
+            swap: 0,
             t: t_0,
             t_name: "t".to_string(),
             dt: dt_0,
@@ -266,6 +267,7 @@ impl Simulation {
             }
             //WARNING,TODO time t incremented only after each subprocesses, consider if it needs to be incremented per subprocess
             intprm.t += intprm.dt;
+            intprm.swap = 1 - intprm.swap;
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
@@ -401,7 +403,7 @@ fn extract_symbols(
     } else {
         "periodic".into()
     };
-    let (func, pdess, init, equationss) = parse_symbols(
+    let (func, pdess, init, equationss, constraintss) = parse_symbols(
         param.symbols,
         consts,
         default_boundary,
@@ -469,7 +471,11 @@ fn extract_symbols(
                     for j in 0..nb_stages {
                         pde.push(format!("tmp_dvar_{}_k{}", name, (j + 1)));
                     }
+                    for j in 0..nb_stages {
+                        pde.push(format!("tmp_sawp_dvar_{}_k{}", name, (j + 1)));
+                    }
                     pde.push(format!("tmp_dvar_{}_tmp", name));
+                    pde.push(format!("tmp_dvar_{}_tmp2", name));
                     pde
                 })
                 .collect::<Vec<_>>();
@@ -502,6 +508,24 @@ fn extract_symbols(
             let name = format!("init_{}", &ini.name);
             h = h.create_kernel(gen_init_kernel(&name, len, init_equ_args.clone(), ini));
             init_kernels.push(name);
+        }
+    }
+
+    for constraints in constraintss {
+        for constraint in constraints {
+            dvars
+                .iter()
+                .find(|(n, _)| n == &constraint.name)
+                .expect(&format!(
+                    "There must be a PDE corresponding to constraint \"{}\"",
+                    &constraint.name
+                ));
+            let name = format!("constraint_{}", &constraint.name);
+            h = h.create_kernel(gen_single_stage_kernel(
+                &name,
+                init_equ_args.clone(),
+                constraint,
+            ));
         }
     }
 
@@ -584,8 +608,16 @@ fn extract_symbols(
                     &format!("tmp_{}_k{}", &dvar.0, (i + 1)),
                     Len(F64(0.0), len * dvar.1),
                 );
+                h = h.add_buffer(
+                    &format!("tmp_sawp_{}_k{}", &dvar.0, (i + 1)),
+                    Len(F64(0.0), len * dvar.1),
+                );
             }
             h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
+            h = h.add_buffer(
+                &format!("tmp_{}_tmp2", &dvar.0),
+                Len(F64(0.0), len * dvar.1),
+            );
         }
     }
     if init_file.len() > 0 {
@@ -835,6 +867,7 @@ fn parse_symbols(
     Vec<Vec<SPDE>>,
     Vec<EqDescriptor>,
     Vec<Vec<EqDescriptor>>,
+    Vec<Vec<EqDescriptor>>,
 ) {
     symbols.iter_mut().for_each(|s| {
         *s = s
@@ -861,11 +894,13 @@ fn parse_symbols(
     let mut pdess = vec![];
     let mut init = vec![];
     let mut equationss = vec![];
+    let mut constraintss = vec![];
 
     let search_const = Regex::new(r"^\s*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_pde = Regex::new(r"^\s*(\w+)'\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let search_constraint = Regex::new(r"^\s*(\w+)'c\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_eqpde = Regex::new(r"^\s*(\w+)'\|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_betweenpde = Regex::new(r"^\s*(\w+)'(\d*)>\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
@@ -933,6 +968,7 @@ fn parse_symbols(
     );
     for (i, symbols) in symbols.into_iter().enumerate() {
         let mut pdes = vec![];
+        let mut constraints = vec![];
         let mut equations = vec![];
 
         macro_rules! parse {
@@ -1036,7 +1072,7 @@ fn parse_symbols(
                                     .collect::<Vec<_>>();
                                 if expr.len() != vec_dim {
                                     panic!(
-                                        "The vectarial dim={} of '{}' is different from de dim={} parsed.",
+                                        "The vectorial dim={} of '{}' is different from de dim={} parsed.",
                                         vec_dim,
                                         $name,
                                         expr.len()
@@ -1067,7 +1103,7 @@ fn parse_symbols(
                                     .collect::<Vec<_>>();
                                 if expr.len() != vec_dim {
                                     panic!(
-                                        "The vectarial dim={} of '{}' is different from de dim={} parsed.",
+                                        "The vectorial dim={} of '{}' is different from de dim={} parsed.",
                                         vec_dim,
                                         $name,
                                         expr.len()
@@ -1090,10 +1126,10 @@ fn parse_symbols(
                     beg!($search $arr, name, expr, priors, EqDescriptor { name, expr, priors });
                 };
                 ($search:ident $arr:ident, $step:expr) => {
-                    beg!($search $arr, name, expr, priors, SPDE {dvar: name,expr, priors,step: $step});
+                    beg!($search $arr, name, expr, priors, SPDE {dvar: name,expr, priors,step: $step, constraint: None});
                 };
                 ($search:ident $arr:ident, $i:ident $step:expr) => {
-                    beg!($search $arr, name, expr, priors, $i, SPDE {dvar: name,expr, priors,step: $step});
+                    beg!($search $arr, name, expr, priors, $i, SPDE {dvar: name,expr, priors,step: $step, constraint: None});
                 };
             }
             equ! {search_init init}
@@ -1101,6 +1137,7 @@ fn parse_symbols(
             equ! {search_eqpde pdes, STEP::EQPDE}
             equ! {search_betweenpde pdes, i STEP::BETWEENPDE(i)}
             equ! {search_e equations}
+            equ! {search_constraint constraints}
             if !found && !search_empty.is_match(l) {
                 panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
             }
@@ -1125,14 +1162,25 @@ fn parse_symbols(
             nj = cj;
         }
         doit(j, nj, &l);
-        pdes.iter_mut()
+        constraints.sort_by_key(|EqDescriptor { name, .. }| name.clone());
+        pdes.iter_mut().for_each(|i| {
+            i.expr.iter_mut().for_each(|e| *e = replace(e, &consts));
+            if let Ok(constraint_id) =
+                constraints.binary_search_by_key(&i.dvar, |EqDescriptor { name, .. }| name.clone())
+            {
+                i.constraint = Some(format!("constraint_{}", constraints[constraint_id].name));
+            }
+        });
+        constraints
+            .iter_mut()
             .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
         equations
             .iter_mut()
             .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
         pdess.push(pdes);
+        constraintss.push(constraints);
         equationss.push(equations);
     }
 
-    (func, pdess, init, equationss)
+    (func, pdess, init, equationss, constraintss)
 }
