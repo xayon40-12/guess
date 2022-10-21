@@ -15,6 +15,7 @@ Param(
     nc = 0.333333
     ivnc = 3
     nb' = D*m2(T)*ivnc*#^2nb + sqrt(2*D*nc*ivdx/dt)*# xi
+    // nb'c = max(nb,-10)
     *nb = nc",
   ],
 )

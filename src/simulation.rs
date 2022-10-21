@@ -492,8 +492,13 @@ fn extract_symbols(
     init_equ_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
     init_equ_args.extend(noises_names.iter().map(|n| KCBuffer(&n, CF64)));
     init_equ_args.push(KCParam("t", CF64));
+    let mut constraint_args = init_equ_args.clone();
+    constraint_args.push(KCParam("dt", CF64));
+    constraint_args.push(KCParam("cdt", CF64));
     let init_equ_args: Vec<SKernelConstructor> =
         init_equ_args.into_iter().map(|a| a.into()).collect();
+    let constraint_args: Vec<SKernelConstructor> =
+        constraint_args.into_iter().map(|a| a.into()).collect();
 
     if init.len() > 0 {
         for ini in init {
@@ -523,7 +528,7 @@ fn extract_symbols(
             let name = format!("constraint_{}", &constraint.name);
             h = h.create_kernel(gen_single_stage_kernel(
                 &name,
-                init_equ_args.clone(),
+                constraint_args.clone(),
                 constraint,
             ));
         }

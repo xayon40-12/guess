@@ -349,49 +349,58 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
+                let (src_swap, dst_swap) = match integrator {
+                    Integrator::Explicit(..) => (*swap, *swap),
+                    Integrator::Implicit(..) => (*swap, 1 - *swap),
+                };
+
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
-                    let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
-                    args[t_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
-                    args[dt_id] = Param(dt_name, (*dt).into()); // increment time for next stage
-                    args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
-                    for &i in $r {
-                        let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
-                        let mut stage_args = vec![
-                            BufArg(dst_buf,"dst",),
-                            BufArg(&bufs[nb_per_stages * i ], "src"),
-                            Param("h", (*dt).into()),
-                        ];
-                        stage_args.extend(
-                            (0..nb_stages)
-                                .map(|j| BufArg(&bufs[nb_per_stages * i + swap*nb_stages + (j + 1)], &argnames[j])),
-                        );
-                        let step = &vars[i].3;
-                        let stage_name = &match step {
-                            STEP::PDE => format!("{}_stage{}", name, $s),
-                            STEP::EQPDE | STEP::BETWEENPDE(_) => {
-                                format!("{}_stage{}_eq", name, $s)
-                            }
-                        };
-                        $pred.push(i);
-                        h.run_arg(stage_name, D1(d * vars[i].2), &stage_args)?;
-                        // vars[i].2 correspond to the vectorial dim of the current pde
-
-
-                        if let Some(constraint_name) = &vars[i].4 { // TODO: constraint_names[i]
-                            let mut constraint_args = vec![BufArg(dst_buf, "dst")];
-                            for i in 0..vars.len() {
-                                let pos = if $s == nb_stages && $pred.contains(&i) {
-                                    0
-                                } else {
-                                    tmpid
-                                }; //TODO: if vars[i] has constraint then read from pre_constraint_id
-                                constraint_args.push(BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1)); // WARNING: use a separate tmp buffer, else values will not be updated simultaneously
-                            }
-                            h.run_arg(constraint_name, D1(d * vars[i].2), &constraint_args)?;
+                        let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
+                        args[t_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
+                        args[dt_id] = Param(dt_name, (*dt).into()); // increment time for next stage
+                        args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
+                        for &i in $r {
+                            let constraint = &vars[i].4;
+                            let dst_buf = &bufs[nb_per_stages * i + if constraint.is_some() { pre_constraint_id } else if $s == nb_stages { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
+                            let mut stage_args = vec![
+                                BufArg(dst_buf,"dst",),
+                                BufArg(&bufs[nb_per_stages * i ], "src"),
+                                Param("h", (*dt).into()),
+                            ];
+                            stage_args.extend(
+                                (0..nb_stages)
+                                    .map(|j| BufArg(&bufs[nb_per_stages * i + src_swap*nb_stages + (j + 1)], &argnames[j])),
+                            );
+                            let step = &vars[i].3;
+                            let stage_name = &match step {
+                                STEP::PDE => format!("{}_stage{}", name, $s),
+                                STEP::EQPDE | STEP::BETWEENPDE(_) => {
+                                    format!("{}_stage{}_eq", name, $s)
+                                }
+                            };
+                            $pred.push(i);
+                            h.run_arg(stage_name, D1(d * vars[i].2), &stage_args)?;
+                            // vars[i].2 correspond to the vectorial dim of the current pde
                         }
-                    }
-                };
+
+                        for &i in $r {
+                            let constraint = &vars[i].4;
+                            let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages { 0 } else { tmpid }];
+                            if let Some(constraint_name) = constraint {
+                                args[0] = BufArg(dst_buf, "dst");
+                                for i in 0..vars.len() {
+                                    let pos = if vars[i].4.is_some() && $pred.contains(&i) { pre_constraint_id } else if ($s == nb_stages && $pred.contains(&i)) || ($s == 0 && !$pred.contains(&i)) {
+                                        0
+                                    } else {
+                                        tmpid
+                                    };
+                                    args[i+1] = BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
+                                }
+                                h.run_arg(constraint_name, D1(d * vars[i].2), &args)?;
+                            }
+                        }
+                    };
                 }
 
                 for s in 0..nb_stages {
@@ -400,7 +409,7 @@ fn multistages_algorithm(
                         stage!(s, r, scheme.aij[s], pred);
                         for &i in r {
                             args[0] = BufArg(
-                                &bufs[nb_per_stages * i + (1 - swap) * nb_stages + (s + 1)],
+                                &bufs[nb_per_stages * i + dst_swap * nb_stages + (s + 1)],
                                 "dst",
                             );
                             for i in 0..vars.len() {
