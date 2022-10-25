@@ -1,0 +1,48 @@
+Param(
+  actions: [(RawData(["tT00","tT01","tT02","e","ut","ux","uy"]), Interval(from: 1, to: 10, every: 0.1))],
+  config: (t_0: Some(1), t_max: 10, dim: D2S((51,10))),
+  default_boundary: Some("ghost"),
+  integrator: Explicit(PC(dt: 1e-1)),
+  symbols: "
+      p(e) := e/3.0
+      pp(e) := 1.0/3.0
+      vs2 := pp(e)
+      eigk(e,ut,uk) := (fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2)
+      vk(ut,uk) := fabs(uk/ut)
+      //eig(e,ut,uk) := (eigk(e,ut,uk)==0?0:1)*max(eigk(e,ut,uk),vk(ut,uk))*(eigk(e,ut,uk)>1?0.0/0.0:1)
+      eig(e,ut,uk) := max(eigk(e,ut,uk),vk(ut,uk))
+      f00(e,t,ut,ux,uy) := ((e+p(e))*ut*ut - p(e))
+      f10(e,t,ut,ux,uy) := ((e+p(e))*ux*ut)
+      f20(e,t,ut,ux,uy) := ((e+p(e))*uy*ut)
+      f11(e,t,ut,ux,uy) := ((e+p(e))*ux*ux + p(e))
+      f21(e,t,ut,ux,uy) := ((e+p(e))*uy*ux)
+      f12(e,t,ut,ux,uy) := ((e+p(e))*ux*uy)
+      f22(e,t,ut,ux,uy) := ((e+p(e))*uy*uy + p(e))
+      f33(e,t,ut,ux,uy) := p(e)
+      vars := e,t,ut,ux,uy
+      tT00' = -t*(#KT_x[eig(e,ut,ux)](f10(vars)) + #KT_y[eig(e,ut,uy)](f20(vars))) - f33(vars) 
+      tT01' = -t*(#KT_x[eig(e,ut,ux)](f11(vars)) + #KT_y[eig(e,ut,uy)](f21(vars)))
+      tT02' = -t*(#KT_x[eig(e,ut,ux)](f12(vars)) + #KT_y[eig(e,ut,uy)](f22(vars)))
+      ttK'1> = tT01*tT01 + tT02*tT02
+      fe(e,t,ttK,tT00) := (tT00 - ttK/(tT00+t*p(e)))/t - e
+      ce(e,t,ttK,tT00) := e<=0?1e-10:e
+      e'2> = ifNaNInf(fix[e=1e-7]<fe,ce,e>(t,ttK,tT00), e)
+      ut'3> = sqrt((tT00/t+p(e))/(e+p(e)))
+      ux'4> = tT01/((e+p(e))*ut*t)
+      uy'4> = tT02/((e+p(e))*ut*t)
+      e0 = 1
+      q = 1
+      ae(t,r) = e0*(2*q)^(8/3)*t^(-4/3)*((1+2*q^2*(t^2+r^2) + q^4*(t^2-r^2)^2))^(-4/3)
+      k(t,r) = atanh(2*t*q^2*r/(1+(q*t)^2 + (q*r)^2))
+      X := ((x-(x_size)/2)*dx)
+      Y := ((y-(y_size)/2)*dy)
+      R := sqrt(X^2 + Y^2)
+      *e = ae(t,R)
+      *ut = cosh(k(t,R))
+      *ux = ifNaNInf(X/R, 0)*sinh(k(t,R))
+      *uy = ifNaNInf(Y/R, 0)*sinh(k(t,R))
+      *tT00 = t*f00(vars)
+      *tT01 = t*f10(vars)
+      *tT02 = t*f20(vars)
+      ",
+)

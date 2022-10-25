@@ -170,6 +170,7 @@ fn multistages_kernels(
     needed_buffers: &Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
     scheme: &Scheme,
+    implicit: bool,
 ) -> Vec<SNeeded> {
     let mut args = vec![KCBuffer("dst", CF64)];
     args.extend(pdes.iter().map(|pde| KCBuffer(&pde.dvar, CF64)));
@@ -225,10 +226,20 @@ fn multistages_kernels(
                 &src[3..]
             );
         }
-        let eq_i = if i == v.len() { i - 1 } else { i }; // the last stage (using the bi) correspond to i=nb_stages=v.len(), so at that point, the last stage should be chosen for eq so nb_stages-1
+        let ssrc = "src".to_string();
+        let eq_arg = if implicit {
+            let eq_i = if i == v.len() { i - 1 } else { i }; // the last stage (using the bi) correspond to i=nb_stages=v.len(), so at that point, the last stage should be chosen for eq so nb_stages-1
+            &argnames[eq_i]
+        } else {
+            if i == 0 {
+                &ssrc
+            } else {
+                &argnames[i - 1] // WARNING: for some reason the values in argnames on the gpu are always 0
+            }
+        };
         let src_eq = format!(
             "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = {}[i];",
-            &argnames[eq_i] // TODO: optimize: use argnames[0] here and in multistages_algorithm for eq, then only alocate one buffer for them
+            &eq_arg // TODO: optimize: use argnames[0] here and in multistages_algorithm for eq, then only alocate one buffer for them
         );
 
         needed.push(NewKernel(
@@ -308,7 +319,11 @@ fn multistages_algorithm(
 
     let tmpid = nb_per_stages - 1;
     let pre_constraint_id = nb_per_stages - 2;
-    let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme);
+    let implicit = match integrator {
+        Integrator::Explicit(..) => false,
+        Integrator::Implicit(..) => true,
+    };
+    let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme, implicit);
     SAlgorithm {
         name: name.clone(),
         callback: std::rc::Rc::new(
@@ -360,14 +375,9 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
-                let implicit = match integrator {
-                    Integrator::Explicit(..) => false,
-                    Integrator::Implicit(..) => true,
-                };
                 let max_iter = 100;
                 let range = if implicit { 0..max_iter } else { 0..1 };
-                for _l in range {
-                    macro_rules! stage {
+                macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
                         args[t_id] = Param(t_name, (t + cdt).into()); // increment time for next stage
@@ -415,11 +425,11 @@ fn multistages_algorithm(
                         }
                     };
                 }
-
+                for _l in range {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
+                        let mut pred = vec![];
                         for r in &vars_ranges {
-                            let mut pred = vec![];
                             stage!(s, r, scheme.aij[s], pred);
                             for &i in r {
                                 args[0] = BufArg(
@@ -439,11 +449,11 @@ fn multistages_algorithm(
                             }
                         }
                     }
-                    for r in &vars_ranges {
-                        let mut pred = vec![];
-                        stage!(nb_stages, r, scheme.bj, pred);
-                    }
                     swap = 1 - swap;
+                }
+                for r in &vars_ranges {
+                    let mut pred = vec![];
+                    stage!(nb_stages, r, scheme.bj, pred);
                 }
 
                 let dt_factor = 1.01;
