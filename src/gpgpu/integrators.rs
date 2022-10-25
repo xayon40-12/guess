@@ -37,6 +37,7 @@ pub struct IntegratorParam {
     pub t: f64,
     pub t_name: String,
     pub dt: f64,
+    pub dt_max: f64,
     pub dt_name: String,
     pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
     pub args: Vec<(String, Types)>,
@@ -335,6 +336,7 @@ fn multistages_algorithm(
                     t,
                     ref t_name,
                     dt,
+                    dt_max,
                     ref dt_name,
                     ref cdt_name,
                     args: iargs,
@@ -358,12 +360,14 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
-                let (_implicit, src_swap, dst_swap) = match integrator {
-                    Integrator::Explicit(..) => (false, swap, swap),
-                    Integrator::Implicit(..) => (true, swap, 1 - swap),
+                let implicit = match integrator {
+                    Integrator::Explicit(..) => false,
+                    Integrator::Implicit(..) => true,
                 };
-
-                macro_rules! stage {
+                let max_iter = 100;
+                let range = if implicit { 0..max_iter } else { 0..1 };
+                for _l in range {
+                    macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
                         args[t_id] = Param(t_name, (t + cdt).into()); // increment time for next stage
@@ -379,7 +383,7 @@ fn multistages_algorithm(
                             ];
                             stage_args.extend(
                                 (0..nb_stages)
-                                    .map(|j| BufArg(&bufs[nb_per_stages * i + src_swap*nb_stages + (j + 1)], &argnames[j])),
+                                    .map(|j| BufArg(&bufs[nb_per_stages * i + swap*nb_stages + (j + 1)], &argnames[j])),
                             );
                             let step = &vars[i].3;
                             let stage_name = &match step {
@@ -412,33 +416,38 @@ fn multistages_algorithm(
                     };
                 }
 
-                for s in 0..nb_stages {
-                    for r in &vars_ranges {
-                        let mut pred = vec![];
-                        stage!(s, r, scheme.aij[s], pred);
-                        for &i in r {
-                            args[0] = BufArg(
-                                &bufs[nb_per_stages * i + dst_swap * nb_stages + (s + 1)],
-                                "dst",
-                            );
-                            for i in 0..vars.len() {
-                                let pos = if s == 0 && !pred.contains(&i) {
-                                    0
-                                } else {
-                                    tmpid
-                                };
-                                args[1 + i] = BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
+                    let dst_swap = if implicit { 1 - swap } else { swap };
+                    for s in 0..nb_stages {
+                        for r in &vars_ranges {
+                            let mut pred = vec![];
+                            stage!(s, r, scheme.aij[s], pred);
+                            for &i in r {
+                                args[0] = BufArg(
+                                    &bufs[nb_per_stages * i + dst_swap * nb_stages + (s + 1)],
+                                    "dst",
+                                );
+                                for i in 0..vars.len() {
+                                    let pos = if s == 0 && !pred.contains(&i) {
+                                        0
+                                    } else {
+                                        tmpid
+                                    };
+                                    args[1 + i] =
+                                        BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
+                                }
+                                h.run_arg(&vars[i].0, dim, &args)?;
                             }
-                            h.run_arg(&vars[i].0, dim, &args)?;
                         }
                     }
+                    for r in &vars_ranges {
+                        let mut pred = vec![];
+                        stage!(nb_stages, r, scheme.bj, pred);
+                    }
+                    swap = 1 - swap;
                 }
-                for r in &vars_ranges {
-                    let mut pred = vec![];
-                    stage!(nb_stages, r, scheme.bj, pred);
-                }
-                swap = 1 - swap;
 
+                let dt_factor = 1.01;
+                intprm.dt = dt_max.min(dt * dt_factor);
                 intprm.t += intprm.dt;
                 intprm.swap = swap;
                 Ok(Some(Box::new(intprm)))
