@@ -328,8 +328,17 @@ fn multistages_algorithm(
                         &name, &len, &bufs.len(), &bufs
                     );
                 }
-                let IntegratorParam{swap, t,ref t_name,dt, ref dt_name, ref cdt_name, args: iargs} = other
-                .downcast_ref("There must be an Ref(&IntegratorParam) given as optional argument in Multistages integrator algorithm.");
+                let mut intprm = other
+                .downcast_ref::<IntegratorParam>("There must be an Ref(&IntegratorParam) given as optional argument in Multistages integrator algorithm.").clone();
+                let IntegratorParam {
+                    mut swap,
+                    t,
+                    ref t_name,
+                    dt,
+                    ref dt_name,
+                    ref cdt_name,
+                    args: iargs,
+                } = intprm.clone();
                 let mut args = vec![BufArg("", ""); vars.len() + 1];
                 if let Some(ns) = &needed_buffers {
                     let mut i = nb_pde_buffers;
@@ -339,8 +348,8 @@ fn multistages_algorithm(
                     }
                 }
                 args.extend(iargs.iter().map(|i| Param(&i.0, i.1)));
-                args.push(Param(t_name, (*t).into()));
-                args.push(Param(dt_name, (*dt).into()));
+                args.push(Param(t_name, t.into()));
+                args.push(Param(dt_name, dt.into()));
                 args.push(Param(cdt_name, 0.into()));
                 let t_id = args.len() - 3;
                 let dt_id = args.len() - 2;
@@ -349,16 +358,16 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
-                let (src_swap, dst_swap) = match integrator {
-                    Integrator::Explicit(..) => (*swap, *swap),
-                    Integrator::Implicit(..) => (*swap, 1 - *swap),
+                let (_implicit, src_swap, dst_swap) = match integrator {
+                    Integrator::Explicit(..) => (false, swap, swap),
+                    Integrator::Implicit(..) => (true, swap, 1 - swap),
                 };
 
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
-                        args[t_id] = Param(t_name, (*t + cdt).into()); // increment time for next stage
-                        args[dt_id] = Param(dt_name, (*dt).into()); // increment time for next stage
+                        args[t_id] = Param(t_name, (t + cdt).into()); // increment time for next stage
+                        args[dt_id] = Param(dt_name, dt.into()); // increment time for next stage
                         args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
                         for &i in $r {
                             let constraint = &vars[i].4;
@@ -366,7 +375,7 @@ fn multistages_algorithm(
                             let mut stage_args = vec![
                                 BufArg(dst_buf,"dst",),
                                 BufArg(&bufs[nb_per_stages * i ], "src"),
-                                Param("h", (*dt).into()),
+                                Param("h", dt.into()),
                             ];
                             stage_args.extend(
                                 (0..nb_stages)
@@ -428,8 +437,11 @@ fn multistages_algorithm(
                     let mut pred = vec![];
                     stage!(nb_stages, r, scheme.bj, pred);
                 }
+                swap = 1 - swap;
 
-                Ok(None)
+                intprm.t += intprm.dt;
+                intprm.swap = swap;
+                Ok(Some(Box::new(intprm)))
             },
         ),
         needed,

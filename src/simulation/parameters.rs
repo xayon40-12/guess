@@ -124,7 +124,7 @@ pub struct Param {
     pub actions: Vec<(Action, Repetition)>,
     pub fields: Option<Vec<Field>>,
     pub noises: Option<Vec<Noises>>,
-    pub symbols: Vec<String>,
+    pub symbols: String,
     pub config: Config,
     pub integrator: Integrator,
     pub default_boundary: Option<String>,

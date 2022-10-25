@@ -16,6 +16,7 @@ use crate::gpgpu::{
     Dim::{self, *},
     DimDir,
 };
+use std::any::Any;
 use std::io::Write;
 
 use std::collections::{HashMap, HashSet};
@@ -55,7 +56,7 @@ pub struct Vars {
     pub dirs: Vec<DimDir>,
     pub len: usize,
     pub dvars: Vec<(String, u32)>,
-    pub stages: Vec<(Option<(String, Vec<String>)>, Vec<EquationKernel>)>,
+    pub stage: (Option<(String, Vec<String>)>, Vec<EquationKernel>),
     pub noises: Option<Vec<Noises>>,
     pub parent: String,
 }
@@ -195,7 +196,7 @@ impl Simulation {
             dirs: _,
             len,
             dvars: _,
-            ref stages,
+            ref stage,
             ref noises,
             phy: _,
             parent: _,
@@ -246,7 +247,9 @@ impl Simulation {
                 }
             }
 
-            for (inte, equs) in stages {
+            let mut update: Option<Box<dyn Any>> = None;
+            let (inte, equs) = stage;
+            {
                 for equ in equs {
                     let mut args = equ
                         .args
@@ -258,16 +261,18 @@ impl Simulation {
                 }
                 if let Some((integrator, vars)) = inte {
                     let vars = vars.iter().map(|i| &i[..]).collect::<Vec<_>>();
-                    self.handler
-                        .run_algorithm(integrator, dim, &[], &vars, Ref(&intprm))?;
+                    update =
+                        self.handler
+                            .run_algorithm(integrator, dim, &[], &vars, Ref(&intprm))?;
                 }
                 for equ in equs {
                     self.handler.copy(&equ.buf_tmp, &equ.buf_var)?;
                 }
             }
-            //WARNING,TODO time t incremented only after each subprocesses, consider if it needs to be incremented per subprocess
-            intprm.t += intprm.dt;
-            intprm.swap = 1 - intprm.swap;
+            intprm = *update
+                .expect("Integrator algorithm must return the next IntegratorParam.")
+                .downcast()
+                .expect("Integrator algorithm did not return a proper IntegratorParam type.");
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
@@ -403,7 +408,7 @@ fn extract_symbols(
     } else {
         "periodic".into()
     };
-    let (func, pdess, init, equationss, constraintss) = parse_symbols(
+    let (func, pdes, init, equations, constraints) = parse_symbols(
         param.symbols,
         consts,
         default_boundary,
@@ -417,73 +422,66 @@ fn extract_symbols(
 
     let mut dvars_names: HashSet<String> = HashSet::new();
     let mut dvars = vec![];
-    let mut integrators = vec![];
+    let integrator;
 
-    for pdes in &pdess {
-        for i in pdes {
-            if dvars_names.insert(i.dvar.clone()) {
-                dvars.push((i.dvar.clone(), i.expr.len()));
-            }
+    for i in &pdes {
+        if dvars_names.insert(i.dvar.clone()) {
+            dvars.push((i.dvar.clone(), i.expr.len()));
         }
     }
-    for equs in &equationss {
-        for i in equs {
-            if dvars_names.insert(i.name.clone()) {
-                dvars.push((i.name.clone(), i.expr.len()));
-            } else {
-                dvars.iter().for_each(|(n,l)| if n == &i.name && l != &i.expr.len() {
+    for i in &equations {
+        if dvars_names.insert(i.name.clone()) {
+            dvars.push((i.name.clone(), i.expr.len()));
+        } else {
+            dvars.iter().for_each(|(n,l)| if n == &i.name && l != &i.expr.len() {
                     panic!("The equation \"{}\" should have the same vectorial length as the pde \"{}\"", &i.name, n);
                 })
-            }
         }
     }
-    let nb_pdess = pdess.len();
-    for (i, pdes) in pdess.into_iter().enumerate() {
-        if pdes.len() > 0 {
-            let integrator = &format!("integrator_{}", i);
-            let mut others = dvars
-                .iter()
-                .filter(|i| pdes.iter().filter(|j| j.dvar == i.0).count() == 0)
-                .map(|i| i.0.clone())
-                .collect::<Vec<_>>();
-            let mut int_other_pdes = others
-                .iter()
-                .map(|i| format!("dvar_{}", i))
-                .collect::<Vec<_>>();
-            int_other_pdes.append(&mut noises_names.clone());
-            others.append(&mut noises_names.clone());
-            let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
-            h = h.create_algorithm(creator(
-                integrator,
-                param.integrator.clone(),
-                pdes,
-                Some(others),
-                vec![
-                    ("t".into(), CF64),
-                    ("dt".into(), CF64),
-                    ("cdt".into(), CF64),
-                ],
-            ));
-            let mut buffers = pde_buffers
-                .iter()
-                .flat_map(|name| {
-                    let mut pde = vec![format!("dvar_{}", name)];
-                    for j in 0..nb_stages {
-                        pde.push(format!("tmp_dvar_{}_k{}", name, (j + 1)));
-                    }
-                    for j in 0..nb_stages {
-                        pde.push(format!("tmp_sawp_dvar_{}_k{}", name, (j + 1)));
-                    }
-                    pde.push(format!("tmp_dvar_{}_tmp", name));
-                    pde.push(format!("tmp_dvar_{}_tmp2", name));
-                    pde
-                })
-                .collect::<Vec<_>>();
-            buffers.append(&mut int_other_pdes);
-            integrators.push(Some((integrator.to_string(), buffers)));
-        } else {
-            integrators.push(None);
-        }
+    if pdes.len() > 0 {
+        let integrator_name = &format!("integrator_{}", 0);
+        let mut others = dvars
+            .iter()
+            .filter(|i| pdes.iter().filter(|j| j.dvar == i.0).count() == 0)
+            .map(|i| i.0.clone())
+            .collect::<Vec<_>>();
+        let mut int_other_pdes = others
+            .iter()
+            .map(|i| format!("dvar_{}", i))
+            .collect::<Vec<_>>();
+        int_other_pdes.append(&mut noises_names.clone());
+        others.append(&mut noises_names.clone());
+        let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
+        h = h.create_algorithm(creator(
+            integrator_name,
+            param.integrator.clone(),
+            pdes,
+            Some(others),
+            vec![
+                ("t".into(), CF64),
+                ("dt".into(), CF64),
+                ("cdt".into(), CF64),
+            ],
+        ));
+        let mut buffers = pde_buffers
+            .iter()
+            .flat_map(|name| {
+                let mut pde = vec![format!("dvar_{}", name)];
+                for j in 0..nb_stages {
+                    pde.push(format!("tmp_dvar_{}_k{}", name, (j + 1)));
+                }
+                for j in 0..nb_stages {
+                    pde.push(format!("tmp_sawp_dvar_{}_k{}", name, (j + 1)));
+                }
+                pde.push(format!("tmp_dvar_{}_tmp", name));
+                pde.push(format!("tmp_dvar_{}_tmp2", name));
+                pde
+            })
+            .collect::<Vec<_>>();
+        buffers.append(&mut int_other_pdes);
+        integrator = Some((integrator_name.to_string(), buffers));
+    } else {
+        integrator = None;
     }
 
     let mut init_kernels = vec![];
@@ -516,63 +514,55 @@ fn extract_symbols(
         }
     }
 
-    for constraints in constraintss {
-        for constraint in constraints {
-            dvars
-                .iter()
-                .find(|(n, _)| n == &constraint.name)
-                .expect(&format!(
-                    "There must be a PDE corresponding to constraint \"{}\"",
-                    &constraint.name
-                ));
-            let name = format!("constraint_{}", &constraint.name);
-            h = h.create_kernel(gen_single_stage_kernel(
-                &name,
-                constraint_args.clone(),
-                constraint,
+    for constraint in constraints {
+        dvars
+            .iter()
+            .find(|(n, _)| n == &constraint.name)
+            .expect(&format!(
+                "There must be a PDE corresponding to constraint \"{}\"",
+                &constraint.name
             ));
-        }
+        let name = format!("constraint_{}", &constraint.name);
+        h = h.create_kernel(gen_single_stage_kernel(
+            &name,
+            constraint_args.clone(),
+            constraint,
+        ));
     }
 
-    let mut equation_kernelss = vec![];
-    if equationss.len() > 0 {
-        for (i, equs) in equationss.into_iter().enumerate() {
-            let mut equation_kernels = vec![];
-            for equ in equs {
-                let name = equ.name.clone();
-                let mut others = dvars
-                    .iter()
-                    .filter(|i| i.0 != name)
-                    .map(|i| (format!("dvar_{}", &i.0), i.0.clone()))
-                    .collect::<Vec<_>>();
-                others.append(
-                    &mut noises_names
-                        .iter()
-                        .map(|n| (n.to_string(), n.to_string()))
-                        .collect::<Vec<_>>(),
-                );
-                let buf_var = format!("dvar_{}", &name);
-                let buf_tmp = format!("tmp_dvar_{}_k1", &name);
-                let mut args = vec![
-                    (buf_var.clone(), name.clone()),
-                    (buf_tmp.clone(), "dst".to_string()),
-                ];
-                args.append(&mut others);
-                let kernel_name = format!("equ_{}_{}", &name, nb_pdess + i);
-                h = h.create_kernel(gen_single_stage_kernel(
-                    &kernel_name,
-                    init_equ_args.clone(),
-                    equ,
-                ));
-                equation_kernels.push(EquationKernel {
-                    kernel_name,
-                    args,
-                    buf_var,
-                    buf_tmp,
-                });
-            }
-            equation_kernelss.push(equation_kernels);
-        }
+    let mut equation_kernels = vec![];
+    for equ in equations {
+        let name = equ.name.clone();
+        let mut others = dvars
+            .iter()
+            .filter(|i| i.0 != name)
+            .map(|i| (format!("dvar_{}", &i.0), i.0.clone()))
+            .collect::<Vec<_>>();
+        others.append(
+            &mut noises_names
+                .iter()
+                .map(|n| (n.to_string(), n.to_string()))
+                .collect::<Vec<_>>(),
+        );
+        let buf_var = format!("dvar_{}", &name);
+        let buf_tmp = format!("tmp_dvar_{}_k1", &name);
+        let mut args = vec![
+            (buf_var.clone(), name.clone()),
+            (buf_tmp.clone(), "dst".to_string()),
+        ];
+        args.append(&mut others);
+        let kernel_name = format!("equ_{}_{}", &name, 1); //WARNING: this 1 is probably useless
+        h = h.create_kernel(gen_single_stage_kernel(
+            &kernel_name,
+            init_equ_args.clone(),
+            equ,
+        ));
+        equation_kernels.push(EquationKernel {
+            kernel_name,
+            args,
+            buf_var,
+            buf_tmp,
+        });
     }
 
     let mut init_file: HashMap<String, Vec<f64>> = if let Some(file) = param.initial_conditions_file
@@ -736,10 +726,7 @@ fn extract_symbols(
         }
     }
 
-    let stages = integrators
-        .into_iter()
-        .zip(equation_kernelss.into_iter())
-        .collect::<Vec<_>>();
+    let stage = (integrator, equation_kernels);
 
     let vars = Vars {
         t_0,
@@ -750,7 +737,7 @@ fn extract_symbols(
         dirs,
         len,
         dvars,
-        stages,
+        stage,
         noises: param.noises,
         phy,
         parent,
@@ -861,7 +848,7 @@ fn gen_init_kernel(
 }
 
 fn parse_symbols(
-    mut symbols: Vec<String>,
+    mut symbols: String,
     mut consts: HashMap<String, String>,
     default_boundary: String,
     mut dpdes: Vec<DPDE>,
@@ -869,24 +856,22 @@ fn parse_symbols(
     global_dim: usize,
 ) -> (
     Vec<SFunction>,
-    Vec<Vec<SPDE>>,
+    Vec<SPDE>,
     Vec<EqDescriptor>,
-    Vec<Vec<EqDescriptor>>,
-    Vec<Vec<EqDescriptor>>,
+    Vec<EqDescriptor>,
+    Vec<EqDescriptor>,
 ) {
-    symbols.iter_mut().for_each(|s| {
-        *s = s
-            .lines()
-            .map(|l| {
-                if let Some(i) = l.find("//") {
-                    &l[0..i]
-                } else {
-                    l
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    });
+    symbols = symbols
+        .lines()
+        .map(|l| {
+            if let Some(i) = l.find("//") {
+                &l[0..i]
+            } else {
+                l
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let re = Regex::new(r"\b\w+\b").unwrap();
     let replace = |src: &str, consts: &HashMap<String, String>| {
         re.replace_all(src, |caps: &Captures| {
@@ -896,10 +881,7 @@ fn parse_symbols(
     };
 
     let mut func = vec![];
-    let mut pdess = vec![];
     let mut init = vec![];
-    let mut equationss = vec![];
-    let mut constraintss = vec![];
 
     let search_const = Regex::new(r"^\s*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_func = Regex::new(r"^\s*(\w+)\((.+?)\)\s+(:?)=\s*(.+?)\s*$").unwrap();
@@ -914,26 +896,24 @@ fn parse_symbols(
     use crate::gpgpu::pde_parser::*;
     let mut lexer_idx = 0;
 
-    for symbols in &symbols {
-        for l in symbols.lines() {
-            // search for pdes or expressions
-            if let Some(caps) = search_pde
-                .captures(l)
-                .or(search_e.captures(l))
-                .or(search_eqpde.captures(l))
-                .or(search_betweenpde.captures(l))
-            {
-                let name = &caps[1];
-                if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
-                    // if a pde is not referenced add it to the known pdes with default
-                    // vec_dim of one and the default boundary function
-                    dpdes.push(DPDE {
-                        var_name: name.into(),
-                        var_dim: dim,
-                        vec_dim: 1,
-                        boundary: default_boundary.clone(),
-                    })
-                }
+    for l in symbols.lines() {
+        // search for pdes or expressions
+        if let Some(caps) = search_pde
+            .captures(l)
+            .or(search_e.captures(l))
+            .or(search_eqpde.captures(l))
+            .or(search_betweenpde.captures(l))
+        {
+            let name = &caps[1];
+            if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
+                // if a pde is not referenced add it to the known pdes with default
+                // vec_dim of one and the default boundary function
+                dpdes.push(DPDE {
+                    var_name: name.into(),
+                    var_dim: dim,
+                    vec_dim: 1,
+                    boundary: default_boundary.clone(),
+                })
             }
         }
     }
@@ -949,10 +929,8 @@ fn parse_symbols(
             .map(|s| s.to_string())
             .collect::<String>()
     };
-    symbols.insert(
-        0,
-        format!(
-            "modx := ((x+x_size)%x_size)
+    symbols = format!(
+        "modx := ((x+x_size)%x_size)
     mody := ((y+y_size)%y_size)
     modz := ((z+z_size)%z_size)
     periodic1(_x,_w,_w_size,*u) := u[w + w_size*modx]
@@ -965,105 +943,104 @@ fn parse_symbols(
     ghost1(_x,_w,_w_size,*u) := u[w + w_size*ghostx]
     ghost2(_x,_y,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*ghosty)]
     ghost3(_x,_y,_z,_w,_w_size,*u) := u[w + w_size*(ghostx + x_size*(ghosty + y_size*ghostz))]
-    ghost({c}_w,_w_size,*u) := ghost{n}({p}w,w_size,u)",
-            c = choice(["_x,", "_y,", "_z,"]),
-            n = global_dim,
-            p = choice(["x,", "y,", "z,"])
-        ),
+    ghost({c}_w,_w_size,*u) := ghost{n}({p}w,w_size,u)
+{symbols}",
+        c = choice(["_x,", "_y,", "_z,"]),
+        n = global_dim,
+        p = choice(["x,", "y,", "z,"]),
+        symbols = symbols
     );
-    for (i, symbols) in symbols.into_iter().enumerate() {
-        let mut pdes = vec![];
-        let mut constraints = vec![];
-        let mut equations = vec![];
+    let mut pdes = vec![];
+    let mut constraints = vec![];
+    let mut equations = vec![];
 
-        macro_rules! parse {
-            ($j:ident $nj:ident, $src:ident, $current_var:expr, $compact:expr) => {{
-                let mut parsed = parse(
-                    &dpdes,
-                    &$current_var.and_then(|name: &String| {
-                        hdpdes.get(name).and_then(|pde| {
-                            Some(if pde.vec_dim > 1 {
-                                Indexable::new_vector(
-                                    pde.var_dim,
-                                    global_dim,
-                                    pde.vec_dim,
-                                    name,
-                                    &pde.boundary,
-                                )
-                            } else {
-                                Indexable::new_scalar(pde.var_dim, global_dim, name, &pde.boundary)
-                            })
-                        })
-                    }),
-                    lexer_idx,
-                    global_dim,
-                    &$src,
-                    $compact,
-                )
-                .expect(&format!(
-                    "Parse error in sub-process {} line{}:\n|------------\n{}\n|------------\n",
-                    i,
-                    if $j == $nj {
-                        format!(" {}", $j + 1)
-                    } else {
-                        format!("s {}-{}", $j, $nj)
-                    },
-                    &$src,
-                ));
-                lexer_idx += parsed.funs.len();
-                func.append(&mut parsed.funs);
-                (parsed.ocl, parsed.priors)
-            }};
-        }
-
-        let mut doit = |j, nj, l: &str| {
-            let mut found = false;
-            if let Some(caps) = search_const.captures(&l) {
-                let name = caps[1].into();
-                let mut src = replace(&caps[3], &consts);
-                if &caps[2] != ":" {
-                    let mut res = parse!(j nj, src, None, false).0;
-                    if res.len() == 1 {
-                        src = format!("({})", res.pop().unwrap());
-                    } else {
-                        src = format!("[{}]", res.join(";"));
-                    }
-                }
-                consts.insert(name, src);
-                found = true;
-            }
-            if let Some(caps) = search_func.captures(&l) {
-                let name = caps[1].into();
-                let args = caps[2]
-                    .split(",")
-                    .map(|i| {
-                        let val = i.trim().to_string();
-                        if val.starts_with("_") {
-                            (val[1..].to_string(), Integer)
-                        } else if val.starts_with("*") {
-                            (val[1..].to_string(), Indexable)
+    macro_rules! parse {
+        ($j:ident $nj:ident, $src:ident, $current_var:expr, $compact:expr) => {{
+            let mut parsed = parse(
+                &dpdes,
+                &$current_var.and_then(|name: &String| {
+                    hdpdes.get(name).and_then(|pde| {
+                        Some(if pde.vec_dim > 1 {
+                            Indexable::new_vector(
+                                pde.var_dim,
+                                global_dim,
+                                pde.vec_dim,
+                                name,
+                                &pde.boundary,
+                            )
                         } else {
-                            (val, Float)
-                        }
+                            Indexable::new_scalar(pde.var_dim, global_dim, name, &pde.boundary)
+                        })
                     })
-                    .collect();
-                let mut src = replace(&caps[4], &consts);
-                let mut priors = None;
-                if &caps[3] != ":" {
-                    let (mut res, p) = parse!(j nj, src, None, true);
-                    priors = Some(p);
-                    if res.len() == 1 {
-                        src = res.pop().unwrap();
+                }),
+                lexer_idx,
+                global_dim,
+                &$src,
+                $compact,
+            )
+            .expect(&format!(
+                "Parse error on line{}:\n|------------\n{}\n|------------\n",
+                if $j == $nj {
+                    format!(" {}", $j + 1)
+                } else {
+                    format!("s {}-{}", $j, $nj)
+                },
+                &$src,
+            ));
+            lexer_idx += parsed.funs.len();
+            func.append(&mut parsed.funs);
+            (parsed.ocl, parsed.priors)
+        }};
+    }
+
+    let mut doit = |j, nj, l: &str| {
+        let mut found = false;
+        if let Some(caps) = search_const.captures(&l) {
+            let name = caps[1].into();
+            let mut src = replace(&caps[3], &consts);
+            if &caps[2] != ":" {
+                let mut res = parse!(j nj, src, None, false).0;
+                if res.len() == 1 {
+                    src = format!("({})", res.pop().unwrap());
+                } else {
+                    src = format!("[{}]", res.join(";"));
+                }
+            }
+            consts.insert(name, src);
+            found = true;
+        }
+        if let Some(caps) = search_func.captures(&l) {
+            let name = caps[1].into();
+            let args = caps[2]
+                .split(",")
+                .map(|i| {
+                    let val = i.trim().to_string();
+                    if val.starts_with("_") {
+                        (val[1..].to_string(), Integer)
+                    } else if val.starts_with("*") {
+                        (val[1..].to_string(), Indexable)
                     } else {
-                        panic!(
+                        (val, Float)
+                    }
+                })
+                .collect();
+            let mut src = replace(&caps[4], &consts);
+            let mut priors = None;
+            if &caps[3] != ":" {
+                let (mut res, p) = parse!(j nj, src, None, true);
+                priors = Some(p);
+                if res.len() == 1 {
+                    src = res.pop().unwrap();
+                } else {
+                    panic!(
                         "The result of parsing a 'function' must be a single value and not a Vect."
                     );
-                    }
                 }
-                func.push(gen_func(name, args, src, priors.unwrap_or_default()));
-                found = true;
             }
-            macro_rules! beg {
+            func.push(gen_func(name, args, src, priors.unwrap_or_default()));
+            found = true;
+        }
+        macro_rules! beg {
                 ($search:ident $arr:ident, $name:ident, $expr:ident, $priors:ident, $val:expr) => {
                     if let Some(caps) = $search.captures(&l) {
                         let $name = caps[1].into();
@@ -1126,7 +1103,7 @@ fn parse_symbols(
                     }
                 };
             }
-            macro_rules! equ {
+        macro_rules! equ {
                 ($search:ident $arr:ident) => {
                     beg!($search $arr, name, expr, priors, EqDescriptor { name, expr, priors });
                 };
@@ -1137,55 +1114,51 @@ fn parse_symbols(
                     beg!($search $arr, name, expr, priors, $i, SPDE {dvar: name,expr, priors,step: $step, constraint: None});
                 };
             }
-            equ! {search_init init}
-            equ! {search_pde pdes, STEP::PDE}
-            equ! {search_eqpde pdes, STEP::EQPDE}
-            equ! {search_betweenpde pdes, i STEP::BETWEENPDE(i)}
-            equ! {search_e equations}
-            equ! {search_constraint constraints}
-            if !found && !search_empty.is_match(l) {
-                panic!("Line {} of sub-process {} could not be parsed.", j + 1, i);
-            }
-        };
-
-        let mut l = String::new();
-        let mut first = false;
-        let mut j = 0;
-        let mut nj = 0;
-        for (cj, cl) in symbols.lines().enumerate() {
-            if cl.contains('=') {
-                if !first {
-                    doit(j, nj, &l);
-                } else {
-                    first = true;
-                }
-                l = cl.into();
-                j = cj;
-            } else {
-                l += cl;
-            }
-            nj = cj;
+        equ! {search_init init}
+        equ! {search_pde pdes, STEP::PDE}
+        equ! {search_eqpde pdes, STEP::EQPDE}
+        equ! {search_betweenpde pdes, i STEP::BETWEENPDE(i)}
+        equ! {search_e equations}
+        equ! {search_constraint constraints}
+        if !found && !search_empty.is_match(l) {
+            panic!("Line {} could not be parsed.", j + 1);
         }
-        doit(j, nj, &l);
-        constraints.sort_by_key(|EqDescriptor { name, .. }| name.clone());
-        pdes.iter_mut().for_each(|i| {
-            i.expr.iter_mut().for_each(|e| *e = replace(e, &consts));
-            if let Ok(constraint_id) =
-                constraints.binary_search_by_key(&i.dvar, |EqDescriptor { name, .. }| name.clone())
-            {
-                i.constraint = Some(format!("constraint_{}", constraints[constraint_id].name));
-            }
-        });
-        constraints
-            .iter_mut()
-            .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
-        equations
-            .iter_mut()
-            .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
-        pdess.push(pdes);
-        constraintss.push(constraints);
-        equationss.push(equations);
-    }
+    };
 
-    (func, pdess, init, equationss, constraintss)
+    let mut l = String::new();
+    let mut first = false;
+    let mut j = 0;
+    let mut nj = 0;
+    for (cj, cl) in symbols.lines().enumerate() {
+        if cl.contains('=') {
+            if !first {
+                doit(j, nj, &l);
+            } else {
+                first = true;
+            }
+            l = cl.into();
+            j = cj;
+        } else {
+            l += cl;
+        }
+        nj = cj;
+    }
+    doit(j, nj, &l);
+    constraints.sort_by_key(|EqDescriptor { name, .. }| name.clone());
+    pdes.iter_mut().for_each(|i| {
+        i.expr.iter_mut().for_each(|e| *e = replace(e, &consts));
+        if let Ok(constraint_id) =
+            constraints.binary_search_by_key(&i.dvar, |EqDescriptor { name, .. }| name.clone())
+        {
+            i.constraint = Some(format!("constraint_{}", constraints[constraint_id].name));
+        }
+    });
+    constraints
+        .iter_mut()
+        .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
+    equations
+        .iter_mut()
+        .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
+
+    (func, pdes, init, equations, constraints)
 }
