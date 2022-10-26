@@ -660,32 +660,37 @@ fn extract_symbols(
         needed: vec![],
     });
 
-    let mut implicit_args = vec![KCBuffer("dst", CF64)];
-    let implicit_k = (0..nb_stages)
-        .map(|i| format!("k{}", i + 1))
-        .collect::<Vec<_>>();
-    implicit_k
-        .iter()
-        .for_each(|k| implicit_args.push(KCBuffer(k, CF64)));
-    let implicit_fk = (0..nb_stages)
-        .map(|i| format!("fk{}", i + 1))
-        .collect::<Vec<_>>();
-    implicit_fk
-        .iter()
-        .for_each(|fk| implicit_args.push(KCBuffer(fk, CF64)));
-    let mut implicit_src = "    dst[x] = ".to_string();
-    let mut implicit_src_end = "".to_string();
-    for i in 0..nb_stages {
-        implicit_src += &format!("fmax(fabs(fk{i}[x]-k{i}[x]),", i = i);
-        implicit_src_end += ")";
+    let implicit = true; // WARNING: use parameter file
+    if implicit {
+        let mut implicit_args = vec![KCBuffer("dst", CF64)];
+        let implicit_k = (0..nb_stages)
+            .map(|i| format!("k{}", i + 1))
+            .collect::<Vec<_>>();
+        implicit_k
+            .iter()
+            .for_each(|k| implicit_args.push(KCBuffer(k, CF64)));
+        let implicit_fk = (0..nb_stages)
+            .map(|i| format!("fk{}", i + 1))
+            .collect::<Vec<_>>();
+        implicit_fk
+            .iter()
+            .for_each(|fk| implicit_args.push(KCBuffer(fk, CF64)));
+        let mut implicit_src = "    dst[x] = ".to_string();
+        let mut implicit_src_end = "".to_string();
+        for i in 1..nb_stages {
+            implicit_src += &format!("fmax(fabs(fk{i}[x]-k{i}[x]),", i = i);
+            implicit_src_end += ")";
+        }
+        implicit_src += &format!("fabs(fk{i}[x]-k{i}[x])", i = nb_stages);
+        implicit_src += &implicit_src_end;
+        implicit_src += ";";
+        h = h.create_kernel(SKernel {
+            name: "implicit_error".into(),
+            args: implicit_args.into_iter().map(|i| i.into()).collect(),
+            src: implicit_src,
+            needed: vec![],
+        });
     }
-    implicit_src += &implicit_src_end;
-    h = h.create_kernel(SKernel {
-        name: "implicit_error".into(),
-        args: implicit_args.into_iter().map(|i| i.into()).collect(),
-        src: implicit_src,
-        needed: vec![],
-    });
 
     if check {
         println!("{}", h.source_code());
@@ -918,7 +923,7 @@ fn parse_symbols(
     let search_e = Regex::new(r"^\s*(\w+)\|\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_constraint = Regex::new(r"^\s*(\w+)'c\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_eqpde = Regex::new(r"^\s*(\w+)'\|\s+(:?)=\s*(.+?)\s*$").unwrap();
-    let search_betweenpde = Regex::new(r"^\s*(\w+)'(\d*)>\s+(:?)=\s*(.+?)\s*$").unwrap();
+    let search_betweenpde = Regex::new(r"^\s*(\w+)'(-?\d*)>\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_init = Regex::new(r"^\s*\*(\w+)\s+(:?)=\s*(.+?)\s*$").unwrap();
     let search_empty = Regex::new(r"^\s*$").unwrap();
 
@@ -1103,7 +1108,7 @@ fn parse_symbols(
                 ($search:ident $arr:ident, $name:ident, $expr:ident, $priors:ident, $i:ident, $val:expr) => {
                     if let Some(caps) = $search.captures(&l) {
                         let $name = caps[1].into();
-                        let $i = caps[2].parse::<u32>().unwrap();
+                        let $i = caps[2].parse::<i32>().unwrap();
                         let src = replace(&caps[4], &consts);
                 let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
                         let ($expr,$priors) = if &caps[3] == ":" {

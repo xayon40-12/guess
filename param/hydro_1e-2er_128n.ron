@@ -7,11 +7,11 @@ Param(
       pp(e) := 1.0/3.0
       vk(ut,uk) := fabs(uk/ut)
       eigk(e,ut,uk) := (fabs(ut*uk*(1.0-pp(e)*pp(e)))+sqrt((ut*ut-uk*uk-(ut*ut-uk*uk-1)*pp(e)*pp(e))*pp(e)*pp(e)))/(ut*ut-(ut*ut-1)*pp(e)*pp(e))
-      eig(e,ut,uk) := max(eigk(e,ut,uk),vk(ut,uk)) 
+      eig'-1> = max(eigk(e,ut,ux),vk(ut,ux)) 
       T10(e,ut,ux) := (e+p(e))*ut*ux
       T11(e,ut,ux) := (e+p(e))*ux*ux + p(e)
-      T00' = -#KT_x[eig(e,ut,ux)](T10(e,ut,ux))
-      T01' = -#KT_x[eig(e,ut,ux)](T11(e,ut,ux))
+      T00' = -#KT_x[eig](T10(e,ut,ux))
+      T01' = -#KT_x[eig](T11(e,ut,ux))
       fe(e,T00,T01) := T00 - T01*T01/(T00 + p(e)) - e
       ce(e,T00,T01) := fmax(e,0)
       e'1> = ifNaNInf(fix<fe,ce,e+1e-4>(T00,T01),e)

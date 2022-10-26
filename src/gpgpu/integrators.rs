@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 pub enum STEP {
     PDE,
     EQPDE,
-    BETWEENPDE(u32),
+    BETWEENPDE(i32),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
