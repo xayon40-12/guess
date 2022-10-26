@@ -7,6 +7,7 @@ Param(
   ],
   config: (t_0: Some(0), t_max: 3, dim: D2((32,10),(1000,0))),
   integrator: Explicit(RK4(dt: 1e-3)),
+  default_boundary: Some("periodic"),
   noises: Some([Normal(name: "xi")]),
   //fields: [(name: "nb", boundary: "periodic")],
   symbols: "

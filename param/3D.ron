@@ -6,6 +6,7 @@ Param(
   ],
   config: (t_0: Some(0), t_max: 3, dim: D3S((32,10))),
   integrator: Explicit(RK4(dt: 1e-3)),
+  default_boundary: Some("periodic"),
   noises: Some([Normal(name: "xi", dim: Some(3))]),
   symbols: [
     "nc = 0.333333
