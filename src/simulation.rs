@@ -652,6 +652,41 @@ fn extract_symbols(
             }
         }
     }
+
+    h = h.create_kernel(SKernel {
+        name: "to_var".into(),
+        args: vec![(&KCBuffer("src", CF64)).into()],
+        src: "    src[x+x_size] = sqrt(src[x+x_size]-src[x]*src[x]);".into(),
+        needed: vec![],
+    });
+
+    let mut implicit_args = vec![KCBuffer("dst", CF64)];
+    let implicit_k = (0..nb_stages)
+        .map(|i| format!("k{}", i + 1))
+        .collect::<Vec<_>>();
+    implicit_k
+        .iter()
+        .for_each(|k| implicit_args.push(KCBuffer(k, CF64)));
+    let implicit_fk = (0..nb_stages)
+        .map(|i| format!("fk{}", i + 1))
+        .collect::<Vec<_>>();
+    implicit_fk
+        .iter()
+        .for_each(|fk| implicit_args.push(KCBuffer(fk, CF64)));
+    let mut implicit_src = "    dst[x] = ".to_string();
+    let mut implicit_src_end = "".to_string();
+    for i in 0..nb_stages {
+        implicit_src += &format!("fmax(fabs(fk{i}[x]-k{i}[x]),", i = i);
+        implicit_src_end += ")";
+    }
+    implicit_src += &implicit_src_end;
+    h = h.create_kernel(SKernel {
+        name: "implicit_error".into(),
+        args: implicit_args.into_iter().map(|i| i.into()).collect(),
+        src: implicit_src,
+        needed: vec![],
+    });
+
     if check {
         println!("{}", h.source_code());
         return Ok(None);
@@ -678,13 +713,6 @@ fn extract_symbols(
     h = h.add_buffer("tmpFFT", Len(F64_2([0.0, 0.0]), len * max));
     h = h.add_buffer("dstFFT", Len(F64_2([0.0, 0.0]), len * max));
     h = h.add_buffer("initFFT", Len(F64_2([0.0, 0.0]), len * max));
-
-    h = h.create_kernel(SKernel {
-        name: "to_var".into(),
-        args: vec![(&KCBuffer("src", CF64)).into()],
-        src: "    src[x+x_size] = sqrt(src[x+x_size]-src[x]*src[x]);".into(),
-        needed: vec![],
-    });
 
     let mut handler = h.build()?;
     if init_kernels.len() > 0 {

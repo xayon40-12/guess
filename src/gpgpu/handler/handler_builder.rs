@@ -3,6 +3,7 @@ use crate::gpgpu::data_file::{DataFile, Format};
 use crate::gpgpu::descriptors::*;
 use crate::gpgpu::functions::{self, Function, SFunction, SNeeded as FSNeeded};
 use crate::gpgpu::kernels::{self, Kernel, SKernel};
+use itertools::Itertools;
 use ocl::ProQue;
 use std::collections::{BTreeMap, HashMap};
 
@@ -322,7 +323,9 @@ impl HandlerBuilder {
             prog += "\n}\n";
         }
 
-        for (name, (SKernel { src, args, .. }, ..)) in &self.kernels {
+        for (name, (SKernel { ref src, args, .. }, ..)) in
+            self.kernels.iter().sorted_by_key(|k| k.0)
+        {
             prog += &format!("\n__kernel void {}(", name);
             for a in args {
                 match a {
