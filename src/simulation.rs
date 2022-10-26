@@ -407,7 +407,7 @@ fn extract_symbols(
     let default_boundary = if let Some(def) = param.default_boundary {
         def
     } else {
-        "periodic".into()
+        "ghost".into()
     };
     let (func, pdes, init, equations, constraints) = parse_symbols(
         param.symbols,
