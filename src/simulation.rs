@@ -51,6 +51,7 @@ pub struct Vars {
     pub t_max: f64,
     pub dt_0: f64,
     pub dt_max: f64,
+    pub dt_factor: f64,
     pub dim: Dim,
     pub phy: [f64; 3],
     pub dirs: Vec<DimDir>,
@@ -192,6 +193,7 @@ impl Simulation {
             t_max,
             dt_0,
             dt_max,
+            dt_factor,
             dim,
             dirs: _,
             len,
@@ -209,6 +211,7 @@ impl Simulation {
             t_name: "t".to_string(),
             dt: dt_0,
             dt_max,
+            dt_factor,
             dt_name: "dt".to_string(),
             cdt_name: "cdt".to_string(),
             args: vec![],
@@ -364,17 +367,36 @@ fn extract_symbols(
     consts.insert("dxyz".to_string(), dxyz.to_string());
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
-    let (nb_stages, dt_0, dt_max, _er, creator): (usize, f64, f64, f64, CreatePDE) =
+    let default_dt_factor = 1.03;
+    let (nb_stages, dt_0, dt_max, dt_factor, _er, creator): (usize, f64, f64, f64, f64, CreatePDE) =
         match &param.integrator {
-            Integrator::Explicit(e) => match e {
-                Explicit::Euler { dt } => (1, *dt, *dt, 0.0, create_euler_pde),
-                Explicit::PC { dt } => (2, *dt, *dt, 0.0, create_projector_corrector_pde),
-                Explicit::RK4 { dt } => (4, *dt, *dt, 0.0, create_rk4_pde),
+            Integrator::Explicit { dt, scheme } => match scheme {
+                Explicit::Euler => (1, *dt, *dt, default_dt_factor, 0.0, create_euler_pde),
+                Explicit::PC => (
+                    2,
+                    *dt,
+                    *dt,
+                    default_dt_factor,
+                    0.0,
+                    create_projector_corrector_pde,
+                ),
+                Explicit::RK4 => (4, *dt, *dt, default_dt_factor, 0.0, create_rk4_pde),
             },
-            Integrator::Implicit(i) => match i {
-                Implicit::RadauIIA2 { dt_0, dt_max, er } => {
-                    (2, *dt_0, *dt_max, *er, create_implicit_radau_pde)
-                }
+            Integrator::Implicit {
+                dt_0,
+                dt_max,
+                dt_factor,
+                er,
+                scheme,
+            } => match scheme {
+                Implicit::RadauIIA2 => (
+                    2,
+                    *dt_0,
+                    *dt_max,
+                    *dt_factor,
+                    *er,
+                    create_implicit_radau_pde,
+                ),
             },
         };
 
@@ -472,7 +494,10 @@ fn extract_symbols(
                     pde.push(format!("tmp_dvar_{}_k{}", name, (j + 1)));
                 }
                 for j in 0..nb_stages {
-                    pde.push(format!("tmp_sawp_dvar_{}_k{}", name, (j + 1)));
+                    pde.push(format!("tmp_swap_dvar_{}_k{}", name, (j + 1)));
+                }
+                for j in 0..nb_stages {
+                    pde.push(format!("tmp_save_dvar_{}_k{}", name, (j + 1)));
                 }
                 pde.push(format!("tmp_dvar_{}_tmp", name));
                 pde.push(format!("tmp_dvar_{}_tmp2", name));
@@ -605,7 +630,11 @@ fn extract_symbols(
                     Len(F64(0.0), len * dvar.1),
                 );
                 h = h.add_buffer(
-                    &format!("tmp_sawp_{}_k{}", &dvar.0, (i + 1)),
+                    &format!("tmp_swap_{}_k{}", &dvar.0, (i + 1)),
+                    Len(F64(0.0), len * dvar.1),
+                );
+                h = h.add_buffer(
+                    &format!("tmp_save_{}_k{}", &dvar.0, (i + 1)),
                     Len(F64(0.0), len * dvar.1),
                 );
             }
@@ -662,26 +691,46 @@ fn extract_symbols(
 
     let implicit = true; // WARNING: use parameter file
     if implicit {
+        let vars = dvars
+            .iter()
+            .filter_map(|(n, _)| {
+                if n.starts_with("dvar_") {
+                    Some(n[5..].to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>();
         let mut implicit_args = vec![KCBuffer("dst", CF64)];
-        let implicit_k = (0..nb_stages)
-            .map(|i| format!("k{}", i + 1))
-            .collect::<Vec<_>>();
-        implicit_k
-            .iter()
-            .for_each(|k| implicit_args.push(KCBuffer(k, CF64)));
-        let implicit_fk = (0..nb_stages)
-            .map(|i| format!("fk{}", i + 1))
-            .collect::<Vec<_>>();
-        implicit_fk
-            .iter()
-            .for_each(|fk| implicit_args.push(KCBuffer(fk, CF64)));
+
+        let mut error_args_names = vec![];
+        for i in 0..vars.len() {
+            error_args_names.push(
+                (0..nb_stages)
+                    .map(|s| format!("{}_k{}", vars[i], s))
+                    .chain((0..nb_stages).map(|s| format!("{}_fk{}", vars[i], s)))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        for i in 0..vars.len() {
+            for s in 0..nb_stages {
+                implicit_args.push(KCBuffer(&error_args_names[i][s], CF64));
+            }
+            for s in 0..nb_stages {
+                implicit_args.push(KCBuffer(&error_args_names[i][nb_stages + s], CF64));
+            }
+        }
+
         let mut implicit_src = "    dst[x] = ".to_string();
         let mut implicit_src_end = "".to_string();
-        for i in 1..nb_stages {
-            implicit_src += &format!("fmax(fabs(fk{i}[x]-k{i}[x]),", i = i);
-            implicit_src_end += ")";
+        for i in 0..vars.len() {
+            for s in 1..nb_stages {
+                implicit_src +=
+                    &format!("fmax(fabs({n}_fk{s}[x]-{n}_k{s}[x]),", n = vars[i], s = s);
+                implicit_src_end += ")";
+            }
         }
-        implicit_src += &format!("fabs(fk{i}[x]-k{i}[x])", i = nb_stages);
+        implicit_src += "0";
         implicit_src += &implicit_src_end;
         implicit_src += ";";
         h = h.create_kernel(SKernel {
@@ -767,6 +816,7 @@ fn extract_symbols(
         t_max,
         dt_0,
         dt_max,
+        dt_factor,
         dim,
         dirs,
         len,

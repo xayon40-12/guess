@@ -1,3 +1,4 @@
+use crate::gpgpu::algorithms::ReduceParam;
 use crate::gpgpu::descriptors::{ConstructorTypes, Types};
 use crate::gpgpu::descriptors::{ConstructorTypes::*, KernelArg::*, KernelConstructor::*};
 use crate::gpgpu::dim::{
@@ -38,6 +39,7 @@ pub struct IntegratorParam {
     pub t_name: String,
     pub dt: f64,
     pub dt_max: f64,
+    pub dt_factor: f64,
     pub dt_name: String,
     pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
     pub args: Vec<(String, Types)>,
@@ -307,7 +309,7 @@ fn multistages_algorithm(
             }
         });
     let nb_stages = scheme.aij.len(); // +1 for bij
-    let nb_per_stages = 3 + 2 * nb_stages;
+    let nb_per_stages = 3 + 3 * nb_stages;
     let mut len = nb_per_stages * vars.len();
     let nb_pde_buffers = len;
     if let Some(ns) = &needed_buffers {
@@ -319,9 +321,9 @@ fn multistages_algorithm(
 
     let tmpid = nb_per_stages - 1;
     let pre_constraint_id = nb_per_stages - 2;
-    let implicit = match integrator {
-        Integrator::Explicit(..) => false,
-        Integrator::Implicit(..) => true,
+    let (max_error, implicit) = match integrator {
+        Integrator::Explicit { .. } => (0.0, false),
+        Integrator::Implicit { er, .. } => (er, true),
     };
     let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme, implicit);
     SAlgorithm {
@@ -350,8 +352,9 @@ fn multistages_algorithm(
                     mut swap,
                     t,
                     ref t_name,
-                    dt,
+                    mut dt,
                     dt_max,
+                    dt_factor,
                     ref dt_name,
                     ref cdt_name,
                     args: iargs,
@@ -376,7 +379,7 @@ fn multistages_algorithm(
                     .collect::<Vec<_>>();
 
                 let max_iter = 100;
-                let range = if implicit { 0..max_iter } else { 0..1 };
+                let range = if implicit { 1..=max_iter } else { 1..=1 };
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
@@ -425,7 +428,7 @@ fn multistages_algorithm(
                         }
                     };
                 }
-                for _l in range {
+                for l in range {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
                         let mut pred = vec![];
@@ -449,6 +452,53 @@ fn multistages_algorithm(
                             }
                         }
                     }
+                    if implicit {
+                        let mut error_args = vec![BufArg(&bufs[tmpid], "dst")];
+                        let mut error_args_names = vec![];
+                        for i in 0..vars.len() {
+                            error_args_names.push(
+                                (0..nb_stages)
+                                    .map(|s| format!("{}_k{}", vars[i].1, s))
+                                    .chain((0..nb_stages).map(|s| format!("{}_fk{}", vars[i].1, s)))
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                        for i in 0..vars.len() {
+                            for s in 0..nb_stages {
+                                error_args.push(BufArg(
+                                    &bufs[nb_per_stages * i + swap * nb_stages + (s + 1)],
+                                    &error_args_names[i][s],
+                                ));
+                            }
+                            for s in 0..nb_stages {
+                                error_args.push(BufArg(
+                                    &bufs[nb_per_stages * i + dst_swap * nb_stages + (s + 1)],
+                                    &error_args_names[i][nb_stages + s],
+                                ));
+                            }
+                        }
+                        h.run_arg("implicit_error", D1(d), &error_args)?;
+                        let ap = ReduceParam {
+                            vect_dim: 1,
+                            dst_size: None,
+                            window: None,
+                        };
+                        let dst_sum = &bufs[tmpid];
+                        h.run_algorithm(
+                            "sum",
+                            D1(d),
+                            &[DimDir::X],
+                            &[&bufs[tmpid], &bufs[pre_constraint_id], dst_sum],
+                            AlgorithmParam::Ref(&ap),
+                        )?;
+                        let err: f64 = h.get_first(dst_sum)?.F64();
+                        if (err * nb_stages as f64) < max_error {
+                            break;
+                        } else if l % 20 == 0 {
+                            dt *= 0.5;
+                            panic!("reset before taking smaller dt is not yet implemented for implicit");
+                        }
+                    }
                     swap = 1 - swap;
                 }
                 swap = 1 - swap; // NOTE: needed to cancel the very last swap so that the correct buffers ore used for following part
@@ -457,7 +507,6 @@ fn multistages_algorithm(
                     stage!(nb_stages, r, scheme.bj, pred);
                 }
 
-                let dt_factor = 1.01;
                 intprm.dt = dt_max.min(dt * dt_factor);
                 intprm.t += intprm.dt;
                 intprm.swap = swap;

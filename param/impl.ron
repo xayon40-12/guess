@@ -1,0 +1,21 @@
+Param(
+  data_files: Some(["m2.txt"]),
+  actions: [
+    (Moments(["nb"]), TotalInterval(from: 0, to: 3, total: 1000)),
+    //(Window(["nb"]), TotalInterval(from: 0, to: 3, total: 100)),
+    //(Correlation(["nb"],Radial), At(3)),
+  ],
+  config: (t_0: Some(0), t_max: 3, dim: D2((32,10),(1000,0))),
+  integrator: Implicit(dt_0: 1e-5, dt_max: 1e-2, dt_factor: 1.1, er: 1e-2, scheme: RadauIIA2),
+  default_boundary: Some("periodic"),
+  noises: Some([Normal(name: "xi")]),
+  //fields: [(name: "nb", boundary: "periodic")],
+  symbols: "
+    D = 1
+    T = 0.15
+    nc = 0.333333
+    ivnc = 3
+    nb' = D*m2(T)*ivnc*#^2nb + sqrt(2*D*nc*ivdx/dt)*# xi
+    // nb'c = max(nb,-10)
+    *nb = nc",
+)
