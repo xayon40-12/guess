@@ -25,6 +25,7 @@ pub enum PrmType {
 pub enum Integrator {
     Explicit {
         dt: f64,
+        er: Option<f64>,
         scheme: Explicit,
     },
     Implicit {

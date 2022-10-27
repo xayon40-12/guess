@@ -16,6 +16,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::kernels::SKernel;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum STEP {
     PDE,
@@ -168,6 +170,44 @@ pub fn create_implicit_radau_pde(
             bjs: Some(vec![1.0, 0.0]),
         },
     )
+}
+
+fn accuracy_kernel(vars: &Vec<SPDE>, nb_stages: usize, bbs: Vec<f64>) -> SNeeded {
+    let mut args = vec![KCBuffer("dst", CF64)];
+    let mut accuracy_args_names = vec![];
+    for i in 0..vars.len() {
+        accuracy_args_names.push(
+            (0..nb_stages)
+                .map(|s| format!("{}_k{}", vars[i].dvar, s))
+                .collect::<Vec<_>>(),
+        );
+    }
+    for i in 0..vars.len() {
+        for s in 0..nb_stages {
+            args.push(KCBuffer(&accuracy_args_names[i][s], CF64));
+        }
+    }
+    let mut src = "    double tmp = ".to_string();
+    for i in 0..vars.len() {
+        if i < vars.len() - 1 {
+            src += "fmax(";
+        }
+        src += "fabs(";
+        for s in 0..nb_stages {
+            src += &format!("{}*{n}_k{s}[x]", bbs[s], n = vars[i].dvar, s = s);
+        }
+        if i < vars.len() - 1 {
+            src += ")";
+        }
+        src += ")";
+    }
+    src += ";";
+    NewKernel(SKernel {
+        name: "accuracy".into(),
+        args: args.into_iter().map(|i| i.into()).collect(),
+        src,
+        needed: vec![],
+    })
 }
 
 fn multistages_kernels(
@@ -330,8 +370,20 @@ fn multistages_algorithm(
         Integrator::Explicit { .. } => (0.0, false),
         Integrator::Implicit { er, .. } => (er, true),
     };
+    let max_accuracy = max_error;
     let max_error = max_error / nb_stages as f64;
-    let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme, implicit);
+    let mut needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme, implicit);
+    let is_accuracy = if let Some(bjs) = &scheme.bjs {
+        let bbs = bjs
+            .iter()
+            .zip(scheme.bj.iter())
+            .map(|(bjs, bj)| bjs - bj)
+            .collect();
+        needed.push(accuracy_kernel(&pdes, nb_stages, bbs));
+        true
+    } else {
+        false
+    };
     SAlgorithm {
         name: name.clone(),
         callback: std::rc::Rc::new(
@@ -572,11 +624,51 @@ fn multistages_algorithm(
                 if implicit {
                     if !done {
                         panic!(
-                            "Implicit scheme could not converge avec {} attempts",
+                            "Implicit scheme could not converge with {} attempts",
                             max_reset
                         );
                     }
+
                     save!();
+                }
+                if is_accuracy {
+                    let mut accuracy_args = vec![BufArg(&bufs[tmpid], "dst")];
+                    let mut accuracy_args_names = vec![];
+                    for i in 0..vars.len() {
+                        accuracy_args_names.push(
+                            (0..nb_stages)
+                                .map(|s| format!("{}_k{}", vars[i].1, s))
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    for i in 0..vars.len() {
+                        for s in 0..nb_stages {
+                            accuracy_args.push(BufArg(
+                                &bufs[nb_per_stages * i + swap * nb_stages + (s + 1)],
+                                &accuracy_args_names[i][s],
+                            ));
+                        }
+                    }
+                    h.run_arg("accuracy", D1(d), &accuracy_args)?;
+                    let ap = ReduceParam {
+                        vect_dim: 1,
+                        dst_size: None,
+                        window: None,
+                    };
+                    let dst_sum = &bufs[tmpid];
+                    h.run_algorithm(
+                        "max",
+                        D1(d),
+                        &[DimDir::X],
+                        &[&bufs[tmpid], &bufs[pre_constraint_id], dst_sum],
+                        AlgorithmParam::Ref(&ap),
+                    )?;
+                    let acc = h.get_first(dst_sum)?.F64();
+                    if acc > max_accuracy {
+                        intprm.dt = dt_max.min(dt * dt_reset);
+                        intprm.swap = swap;
+                        return Ok(Some(Box::new(intprm)));
+                    }
                 }
                 for r in &vars_ranges {
                     let mut pred = vec![];

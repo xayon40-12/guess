@@ -397,7 +397,7 @@ fn extract_symbols(
         f64,
         CreatePDE,
     ) = match &param.integrator {
-        Integrator::Explicit { dt, scheme } => match scheme {
+        Integrator::Explicit { dt, er, scheme } => match scheme {
             Explicit::Euler => (
                 1,
                 *dt,
@@ -406,7 +406,7 @@ fn extract_symbols(
                 default_dt_reset,
                 default_max_iter,
                 default_max_reset,
-                0.0,
+                er.unwrap_or(0.0),
                 create_euler_pde,
             ),
             Explicit::PC => (
@@ -417,7 +417,7 @@ fn extract_symbols(
                 default_dt_reset,
                 default_max_iter,
                 default_max_reset,
-                0.0,
+                er.unwrap_or(0.0),
                 create_projector_corrector_pde,
             ),
             Explicit::RK4 => (
@@ -428,7 +428,7 @@ fn extract_symbols(
                 default_dt_reset,
                 default_max_iter,
                 default_max_reset,
-                0.0,
+                er.unwrap_or(0.0),
                 create_rk4_pde,
             ),
         },
@@ -767,8 +767,8 @@ fn extract_symbols(
                 }
             })
             .collect::<Vec<String>>();
-        let mut implicit_args = vec![KCBuffer("dst", CF64)];
 
+        let mut implicit_args = vec![KCBuffer("dst", CF64)];
         let mut error_args_names = vec![];
         for i in 0..vars.len() {
             error_args_names.push(
@@ -792,7 +792,7 @@ fn extract_symbols(
         let mut implicit_src = "    double tmp = ".to_string();
         let mut implicit_src_end = "".to_string();
         for i in 0..vars.len() {
-            for s in 1..nb_stages {
+            for s in 0..nb_stages {
                 let tmp = format!(
                     "ifNaNInf(fabs({n}_fk{s}[x]-{n}_k{s}[x])/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 0)",
                     //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
@@ -823,7 +823,7 @@ fn extract_symbols(
             needed: vec![],
         });
         let mut propagate_str = "    dst[x] = ".to_string();
-        let d = dirs.len();
+        let d = dim.len();
         let dr = |i, p| {
             let mut a = [0, 0, 0, 0];
             a[i] = p;
