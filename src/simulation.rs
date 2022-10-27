@@ -52,6 +52,7 @@ pub struct Vars {
     pub dt_0: f64,
     pub dt_max: f64,
     pub dt_factor: f64,
+    pub dt_reset: f64,
     pub dim: Dim,
     pub phy: [f64; 3],
     pub dirs: Vec<DimDir>,
@@ -194,6 +195,7 @@ impl Simulation {
             dt_0,
             dt_max,
             dt_factor,
+            dt_reset,
             dim,
             dirs: _,
             len,
@@ -212,6 +214,7 @@ impl Simulation {
             dt: dt_0,
             dt_max,
             dt_factor,
+            dt_reset,
             dt_name: "dt".to_string(),
             cdt_name: "cdt".to_string(),
             args: vec![],
@@ -368,37 +371,64 @@ fn extract_symbols(
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
     let default_dt_factor = 1.03;
-    let (nb_stages, dt_0, dt_max, dt_factor, _er, creator): (usize, f64, f64, f64, f64, CreatePDE) =
-        match &param.integrator {
-            Integrator::Explicit { dt, scheme } => match scheme {
-                Explicit::Euler => (1, *dt, *dt, default_dt_factor, 0.0, create_euler_pde),
-                Explicit::PC => (
-                    2,
-                    *dt,
-                    *dt,
-                    default_dt_factor,
-                    0.0,
-                    create_projector_corrector_pde,
-                ),
-                Explicit::RK4 => (4, *dt, *dt, default_dt_factor, 0.0, create_rk4_pde),
-            },
-            Integrator::Implicit {
-                dt_0,
-                dt_max,
-                dt_factor,
-                er,
-                scheme,
-            } => match scheme {
-                Implicit::RadauIIA2 => (
-                    2,
-                    *dt_0,
-                    *dt_max,
-                    *dt_factor,
-                    *er,
-                    create_implicit_radau_pde,
-                ),
-            },
-        };
+    let default_dt_reset = 0.5;
+    let (nb_stages, dt_0, dt_max, dt_factor, dt_reset, _er, creator): (
+        usize,
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        CreatePDE,
+    ) = match &param.integrator {
+        Integrator::Explicit { dt, scheme } => match scheme {
+            Explicit::Euler => (
+                1,
+                *dt,
+                *dt,
+                default_dt_factor,
+                default_dt_reset,
+                0.0,
+                create_euler_pde,
+            ),
+            Explicit::PC => (
+                2,
+                *dt,
+                *dt,
+                default_dt_factor,
+                default_dt_reset,
+                0.0,
+                create_projector_corrector_pde,
+            ),
+            Explicit::RK4 => (
+                4,
+                *dt,
+                *dt,
+                default_dt_factor,
+                default_dt_reset,
+                0.0,
+                create_rk4_pde,
+            ),
+        },
+        Integrator::Implicit {
+            dt_0,
+            dt_max,
+            dt_factor,
+            dt_reset,
+            er,
+            scheme,
+        } => match scheme {
+            Implicit::RadauIIA2 => (
+                2,
+                *dt_0,
+                *dt_max,
+                *dt_factor,
+                dt_reset.unwrap_or(default_dt_reset),
+                *er,
+                create_implicit_radau_pde,
+            ),
+        },
+    };
 
     let mut noises_names = HashSet::new();
     let mut dpdes = param
@@ -817,6 +847,7 @@ fn extract_symbols(
         dt_0,
         dt_max,
         dt_factor,
+        dt_reset,
         dim,
         dirs,
         len,

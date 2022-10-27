@@ -31,6 +31,7 @@ pub enum Integrator {
         dt_0: f64,
         dt_max: f64,
         dt_factor: f64,
+        dt_reset: Option<f64>,
         er: f64,
         scheme: Implicit,
     },

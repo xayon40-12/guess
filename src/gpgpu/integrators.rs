@@ -40,6 +40,7 @@ pub struct IntegratorParam {
     pub dt: f64,
     pub dt_max: f64,
     pub dt_factor: f64,
+    pub dt_reset: f64,
     pub dt_name: String,
     pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
     pub args: Vec<(String, Types)>,
@@ -355,6 +356,7 @@ fn multistages_algorithm(
                     mut dt,
                     dt_max,
                     dt_factor,
+                    dt_reset,
                     ref dt_name,
                     ref cdt_name,
                     args: iargs,
@@ -378,8 +380,38 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
-                let max_iter = 100;
-                let range = if implicit { 1..=max_iter } else { 1..=1 };
+                macro_rules! save {
+                    () => {
+                        for i in 0..vars.len() {
+                            for j in 0..nb_stages {
+                                h.copy(
+                                    &bufs[nb_per_stages * i + swap * nb_stages + (j + 1)],
+                                    &bufs[nb_per_stages * i + 2 * nb_stages + (j + 1)],
+                                )?;
+                            }
+                        }
+                    };
+                }
+                macro_rules! reset {
+                    () => {
+                        for i in 0..vars.len() {
+                            for j in 0..nb_stages {
+                                h.copy(
+                                    &bufs[nb_per_stages * i + 2 * nb_stages + (j + 1)],
+                                    &bufs[nb_per_stages * i + swap * nb_stages + (j + 1)],
+                                )?;
+                            }
+                        }
+                    };
+                }
+
+                let max_iter = 20;
+                let max_error_iter = 2;
+                let range = if implicit {
+                    1..=max_error_iter * max_iter
+                } else {
+                    1..=1
+                };
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
@@ -428,6 +460,7 @@ fn multistages_algorithm(
                         }
                     };
                 }
+                let mut done = false;
                 for l in range {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
@@ -492,14 +525,25 @@ fn multistages_algorithm(
                             AlgorithmParam::Ref(&ap),
                         )?;
                         let err: f64 = h.get_first(dst_sum)?.F64();
-                        if (err * nb_stages as f64) < max_error {
-                            break;
-                        } else if l % 20 == 0 {
-                            dt *= 0.5;
-                            panic!("reset before taking smaller dt is not yet implemented for implicit");
-                        }
                         swap = 1 - swap;
+                        if (err * nb_stages as f64) < max_error {
+                            done = true;
+                            break;
+                        } else if l % max_iter == 0 {
+                            dt *= dt_reset;
+                            println!("reset");
+                            reset!();
+                        }
                     }
+                }
+                if implicit {
+                    if !done {
+                        panic!(
+                            "Implicit scheme could not converge avec {} attempts",
+                            max_error_iter
+                        );
+                    }
+                    save!();
                 }
                 for r in &vars_ranges {
                     let mut pred = vec![];
