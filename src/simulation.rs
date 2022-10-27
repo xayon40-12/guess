@@ -780,11 +780,16 @@ fn extract_symbols(
         let mut implicit_src_end = "".to_string();
         for i in 0..vars.len() {
             for s in 1..nb_stages {
+                let tmp = format!(
+                    "fabs({n}_fk{s}[x]-{n}_k{s}[x])/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x]))",
+                    //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
+                    n = vars[i],
+                    s = s
+                );
                 if i == vars.len() - 1 && s == nb_stages - 1 {
-                    implicit_src += &format!("fabs({n}_fk{s}[x]-{n}_k{s}[x])", n = vars[i], s = s);
+                    implicit_src += &tmp;
                 } else {
-                    implicit_src +=
-                        &format!("fmax(fabs({n}_fk{s}[x]-{n}_k{s}[x]),", n = vars[i], s = s);
+                    implicit_src += &format!("fmax({},", tmp);
                     implicit_src_end += ")";
                 }
             }
