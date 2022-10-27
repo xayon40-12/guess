@@ -349,6 +349,7 @@ fn extract_symbols(
 
     h = h.load_algorithm("moments");
     h = h.load_algorithm("sum");
+    h = h.load_algorithm("max");
     h = h.load_algorithm("correlation");
     h = h.load_algorithm("FFT");
     h = h.load_algorithm_named("philox4x32_10", "noise");
@@ -549,10 +550,11 @@ fn extract_symbols(
                 for j in 0..nb_stages {
                     pde.push(format!("tmp_save_dvar_{}_k{}", name, (j + 1)));
                 }
-                pde.push(format!("tmp_dvar_{}_tmp", name));
                 pde.push(format!("tmp_dvar_{}_tmp2", name));
+                pde.push(format!("tmp_dvar_{}_tmp", name));
                 pde
             })
+            .chain(["tmp_error".to_string()])
             .collect::<Vec<_>>();
         buffers.append(&mut int_other_pdes);
         integrator = Some((integrator_name.to_string(), buffers));
@@ -688,13 +690,14 @@ fn extract_symbols(
                     Len(F64(0.0), len * dvar.1),
                 );
             }
-            h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
             h = h.add_buffer(
                 &format!("tmp_{}_tmp2", &dvar.0),
                 Len(F64(0.0), len * dvar.1),
             );
+            h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
         }
     }
+    h = h.add_buffer("tmp_error", Len(F64(0.0), len));
     if init_file.len() > 0 {
         eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys())
     }
@@ -770,23 +773,35 @@ fn extract_symbols(
                 implicit_args.push(KCBuffer(&error_args_names[i][nb_stages + s], CF64));
             }
         }
+        implicit_args.push(KCBuffer("err", CF64));
+        implicit_args.push(KCParam("e", CF64));
 
-        let mut implicit_src = "    dst[x] = ".to_string();
+        let mut implicit_src = "    double tmp = ".to_string();
         let mut implicit_src_end = "".to_string();
         for i in 0..vars.len() {
             for s in 1..nb_stages {
-                implicit_src +=
-                    &format!("fmax(fabs({n}_fk{s}[x]-{n}_k{s}[x]),", n = vars[i], s = s);
-                implicit_src_end += ")";
+                if i == vars.len() - 1 && s == nb_stages - 1 {
+                    implicit_src += &format!("fabs({n}_fk{s}[x]-{n}_k{s}[x])", n = vars[i], s = s);
+                } else {
+                    implicit_src +=
+                        &format!("fmax(fabs({n}_fk{s}[x]-{n}_k{s}[x]),", n = vars[i], s = s);
+                    implicit_src_end += ")";
+                }
             }
         }
-        implicit_src += "0";
         implicit_src += &implicit_src_end;
-        implicit_src += ";";
+        implicit_src += ";\n    dst[x] = tmp;\n    err[x] = tmp<e;";
         h = h.create_kernel(SKernel {
             name: "implicit_error".into(),
             args: implicit_args.into_iter().map(|i| i.into()).collect(),
             src: implicit_src,
+            needed: vec![],
+        });
+
+        h = h.create_kernel(SKernel {
+            name: "reset_error".into(),
+            args: vec![(&KCBuffer("dst", CF64)).into()],
+            src: "    dst[x] = true;".into(),
             needed: vec![],
         });
     }

@@ -313,7 +313,7 @@ fn multistages_algorithm(
         });
     let nb_stages = scheme.aij.len(); // +1 for bij
     let nb_per_stages = 3 + 3 * nb_stages;
-    let mut len = nb_per_stages * vars.len();
+    let mut len = nb_per_stages * vars.len() + 1; // +1 for the error buffer
     let nb_pde_buffers = len;
     if let Some(ns) = &needed_buffers {
         len += ns.len();
@@ -324,10 +324,12 @@ fn multistages_algorithm(
 
     let tmpid = nb_per_stages - 1;
     let pre_constraint_id = nb_per_stages - 2;
+    let error_id = nb_per_stages - 3;
     let (max_error, implicit) = match integrator {
         Integrator::Explicit { .. } => (0.0, false),
         Integrator::Implicit { er, .. } => (er, true),
     };
+    let max_error = max_error / nb_stages as f64;
     let needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme, implicit);
     SAlgorithm {
         name: name.clone(),
@@ -384,6 +386,15 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
+                macro_rules! reset_error {
+                    ($i:ident) => {
+                        h.run_arg(
+                            "reset_error",
+                            D1(d),
+                            &[BufArg(&bufs[nb_per_stages * $i + error_id], "dst")],
+                        )?;
+                    };
+                }
                 macro_rules! save {
                     () => {
                         for i in 0..vars.len() {
@@ -393,6 +404,7 @@ fn multistages_algorithm(
                                     &bufs[nb_per_stages * i + 2 * nb_stages + (j + 1)],
                                 )?;
                             }
+                            reset_error!(i);
                         }
                     };
                 }
@@ -405,6 +417,7 @@ fn multistages_algorithm(
                                     &bufs[nb_per_stages * i + swap * nb_stages + (j + 1)],
                                 )?;
                             }
+                            reset_error!(i);
                         }
                     };
                 }
@@ -512,6 +525,8 @@ fn multistages_algorithm(
                                 ));
                             }
                         }
+                        error_args.push(BufArg(&bufs[error_id], "err"));
+                        error_args.push(Param("e", max_error.into()));
                         h.run_arg("implicit_error", D1(d), &error_args)?;
                         let ap = ReduceParam {
                             vect_dim: 1,
@@ -520,7 +535,7 @@ fn multistages_algorithm(
                         };
                         let dst_sum = &bufs[tmpid];
                         h.run_algorithm(
-                            "sum",
+                            "max",
                             D1(d),
                             &[DimDir::X],
                             &[&bufs[tmpid], &bufs[pre_constraint_id], dst_sum],
@@ -528,12 +543,11 @@ fn multistages_algorithm(
                         )?;
                         let err: f64 = h.get_first(dst_sum)?.F64();
                         swap = 1 - swap;
-                        if (err * nb_stages as f64) < max_error {
+                        if err < max_error {
                             done = true;
                             break;
                         } else if l % max_iter == 0 {
                             dt *= dt_reset;
-                            println!("reset");
                             reset!();
                         }
                     }
