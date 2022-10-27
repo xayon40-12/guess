@@ -5,7 +5,7 @@ Param(
     (RawData(["u", "v"]), TotalInterval(from: 0, to: 3, total: 1000)),
   ],
   config: (t_0: Some(0), t_max: 3.1, dim: D1((8,1))),
-  integrator: Explicit(Euler(dt: 1e-3)),
+  integrator: Explicit(dt: 1e-3, scheme: Euler),
   fields: Some([(name: "v", vect_dim: Some(2))]),
   symbols: [
     "f(_a,*b) := b[a]

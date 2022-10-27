@@ -498,10 +498,9 @@ fn multistages_algorithm(
                             dt *= 0.5;
                             panic!("reset before taking smaller dt is not yet implemented for implicit");
                         }
+                        swap = 1 - swap;
                     }
-                    swap = 1 - swap;
                 }
-                swap = 1 - swap; // NOTE: needed to cancel the very last swap so that the correct buffers ore used for following part
                 for r in &vars_ranges {
                     let mut pred = vec![];
                     stage!(nb_stages, r, scheme.bj, pred);
