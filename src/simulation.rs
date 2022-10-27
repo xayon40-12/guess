@@ -781,7 +781,7 @@ fn extract_symbols(
         for i in 0..vars.len() {
             for s in 1..nb_stages {
                 let tmp = format!(
-                    "fabs({n}_fk{s}[x]-{n}_k{s}[x])/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x]))",
+                    "ifNaNInf(fabs({n}_fk{s}[x]-{n}_k{s}[x])/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 0)",
                     //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
                     n = vars[i],
                     s = s
