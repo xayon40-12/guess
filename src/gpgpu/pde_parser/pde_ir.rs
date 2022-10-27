@@ -22,7 +22,7 @@ pub struct Indexable {
     boundary: String,
 }
 
-fn coords_str(c: &[i32; 4], dim: usize, vec_dim: usize) -> String {
+pub fn coords_str(c: &[i32; 4], dim: usize, vec_dim: usize) -> String {
     let coo = |i| {
         format!(
             "{}{}{}",
@@ -589,6 +589,8 @@ impl SPDETokens {
 }
 
 pub mod ir_helper {
+    use self::lexer_compositor::LexerComp;
+
     pub use super::*;
     pub use DiffDir::*;
     pub use SPDETokens::*;
@@ -622,8 +624,12 @@ pub mod ir_helper {
         Symb(n.to_string())
     }
 
-    pub fn diff<T: Into<SPDETokens>, U: Into<DiffDir>>(a: T, d: U) -> SPDETokens {
-        a.into().apply_diff(d.into())
+    pub fn diff<T: Into<SPDETokens>, U: Into<DiffDir>>(a: T, d: U) -> LexerComp {
+        LexerComp {
+            token: a.into().apply_diff(d.into()),
+            funs: vec![],
+            max_space_derivative_depth: 1,
+        }
     }
 
     pub fn kt<T: Into<SPDETokens>>(
@@ -632,7 +638,7 @@ pub mod ir_helper {
         eigs: Vec<T>,
         theta: f64,
         dirs: Vec<DimDir>,
-    ) -> SPDETokens {
+    ) -> LexerComp {
         use kt_scheme::*;
         let u = u.into().convert();
         let err = "first parameter of pde_id::ir_helper::kt function must be an SPDETokens::Indx.";
@@ -657,10 +663,15 @@ pub mod ir_helper {
             .into_iter()
             .map(|i| kt(&u, &fu, &eigs, theta, i as usize))
             .collect::<Vec<_>>();
-        if res.len() == 1 {
+        let token = if res.len() == 1 {
             res.pop().unwrap()
         } else {
             vect(res)
+        };
+        LexerComp {
+            token,
+            funs: vec![],
+            max_space_derivative_depth: 1,
         }
     }
 

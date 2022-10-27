@@ -12,6 +12,7 @@ pub struct Parsed {
     pub ocl: Vec<String>,
     pub priors: Vec<String>,
     pub funs: Vec<SFunction>,
+    pub max_space_derivative_depth: usize,
 }
 
 ///context should contains the current pde, so one of the 'name' in &[DPDE]
@@ -32,6 +33,7 @@ pub fn parse<'a>(
         ocl,
         priors: to_priors(m),
         funs: parsed.funs,
+        max_space_derivative_depth: parsed.max_space_derivative_depth,
     })
 }
 

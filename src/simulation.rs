@@ -10,6 +10,7 @@ use crate::gpgpu::integrators::{
     CreatePDE, IntegratorParam, SPDE, STEP,
 };
 use crate::gpgpu::kernels::SKernel;
+use crate::gpgpu::pde_parser::pde_ir::coords_str;
 use crate::gpgpu::pde_parser::{pde_ir::Indexable, DPDE};
 use crate::gpgpu::{handler::HandlerBuilder, Handler};
 use crate::gpgpu::{
@@ -23,6 +24,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
+use itertools::Itertools;
 use parameters::Noises::{self, *};
 pub use parameters::{
     ActivationCallback, Callback, EqDescriptor, Explicit, Implicit, Integrator, Param,
@@ -55,6 +57,7 @@ pub struct Vars {
     pub dt_reset: f64,
     pub max_iter: usize,
     pub max_reset: usize,
+    pub nb_propagate: usize,
     pub dim: Dim,
     pub phy: [f64; 3],
     pub dirs: Vec<DimDir>,
@@ -200,6 +203,7 @@ impl Simulation {
             dt_reset,
             max_iter,
             max_reset,
+            nb_propagate,
             dim,
             dirs: _,
             len,
@@ -221,6 +225,7 @@ impl Simulation {
             dt_reset,
             max_iter,
             max_reset,
+            nb_propagate,
             dt_name: "dt".to_string(),
             cdt_name: "cdt".to_string(),
             args: vec![],
@@ -451,6 +456,7 @@ fn extract_symbols(
         },
     };
 
+    let default_boundary = "ghost";
     let mut noises_names = HashSet::new();
     let mut dpdes = param
         .fields
@@ -458,7 +464,7 @@ fn extract_symbols(
         .iter()
         .map(|f| DPDE {
             var_name: f.name.clone(),
-            boundary: f.boundary.clone().unwrap_or("periodic".into()),
+            boundary: f.boundary.clone().unwrap_or(default_boundary.into()),
             var_dim: dirs.len(),
             vec_dim: f.vect_dim.unwrap_or(1),
         })
@@ -480,9 +486,15 @@ fn extract_symbols(
     let default_boundary = if let Some(def) = param.default_boundary {
         def
     } else {
-        "ghost".into()
+        default_boundary.into()
     };
-    let (func, pdes, init, equations, constraints) = parse_symbols(
+    let boundaries = dpdes
+        .iter()
+        .map(|DPDE { boundary, .. }| boundary.to_string())
+        .chain([default_boundary.clone()])
+        .unique()
+        .collect::<Vec<_>>();
+    let (func, pdes, init, equations, constraints, max_space_derivative_depth) = parse_symbols(
         param.symbols,
         consts,
         default_boundary,
@@ -490,6 +502,7 @@ fn extract_symbols(
         dirs.len(),
         global_dim,
     );
+    let nb_propagate = (1 + max_space_derivative_depth) / 2;
     for f in func {
         h = h.create_function(f);
     }
@@ -809,6 +822,42 @@ fn extract_symbols(
             src: "    dst[x] = true;".into(),
             needed: vec![],
         });
+        let mut propagate_str = "    dst[x] = ".to_string();
+        let d = dirs.len();
+        let dr = |i, p| {
+            let mut a = [0, 0, 0, 0];
+            a[i] = p;
+            a
+        };
+        let coords = phy
+            .iter()
+            .enumerate()
+            .flat_map(|(i, p)| {
+                if *p == 0.0 {
+                    vec![]
+                } else {
+                    vec![dr(i, 1), dr(i, -1)]
+                }
+            })
+            .chain([dr(0, 0)])
+            .collect::<Vec<_>>();
+        let mut ors = String::new();
+        for b in boundaries {
+            for c in &coords {
+                ors += &format!(" || {}({},src)", b, coords_str(c, d, 1));
+            }
+        }
+        propagate_str += &ors[4..];
+        propagate_str += ";";
+        h = h.create_kernel(SKernel {
+            name: "propagate_error".into(),
+            args: vec![
+                (&KCBuffer("dst", CF64)).into(),
+                (&KCBuffer("src", CF64)).into(),
+            ],
+            src: propagate_str,
+            needed: vec![],
+        });
     }
 
     if check {
@@ -890,6 +939,7 @@ fn extract_symbols(
         dt_reset,
         max_iter,
         max_reset,
+        nb_propagate,
         dim,
         dirs,
         len,
@@ -1017,6 +1067,7 @@ fn parse_symbols(
     Vec<EqDescriptor>,
     Vec<EqDescriptor>,
     Vec<EqDescriptor>,
+    usize,
 ) {
     symbols = symbols
         .lines()
@@ -1110,6 +1161,7 @@ fn parse_symbols(
     let mut pdes = vec![];
     let mut constraints = vec![];
     let mut equations = vec![];
+    let mut nb_propagate = 0;
 
     macro_rules! parse {
         ($j:ident $nj:ident, $src:ident, $current_var:expr, $compact:expr) => {{
@@ -1146,6 +1198,7 @@ fn parse_symbols(
             ));
             lexer_idx += parsed.funs.len();
             func.append(&mut parsed.funs);
+            nb_propagate = nb_propagate.max(parsed.max_space_derivative_depth);
             (parsed.ocl, parsed.priors)
         }};
     }
@@ -1317,5 +1370,5 @@ fn parse_symbols(
         .iter_mut()
         .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
 
-    (func, pdes, init, equations, constraints)
+    (func, pdes, init, equations, constraints, nb_propagate)
 }

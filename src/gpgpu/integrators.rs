@@ -43,6 +43,7 @@ pub struct IntegratorParam {
     pub dt_reset: f64,
     pub max_iter: usize,
     pub max_reset: usize,
+    pub nb_propagate: usize,
     pub dt_name: String,
     pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
     pub args: Vec<(String, Types)>,
@@ -363,6 +364,7 @@ fn multistages_algorithm(
                     max_iter,
                     max_reset,
                     dt_reset,
+                    nb_propagate,
                     ref dt_name,
                     ref cdt_name,
                     args: iargs,
@@ -525,9 +527,24 @@ fn multistages_algorithm(
                                 ));
                             }
                         }
-                        error_args.push(BufArg(&bufs[error_id], "err"));
+                        error_args.push(BufArg(
+                            &bufs[if nb_propagate % 2 == 0 {
+                                error_id
+                            } else {
+                                pre_constraint_id
+                            }],
+                            "err",
+                        ));
                         error_args.push(Param("e", max_error.into()));
                         h.run_arg("implicit_error", D1(d), &error_args)?;
+                        let prop = [&bufs[error_id], &bufs[pre_constraint_id]];
+                        for i in 0..nb_propagate {
+                            h.run_arg(
+                                "propagate_error",
+                                D1(d),
+                                &[BufArg(prop[1 - i % 2], "dst"), BufArg(prop[i % 2], "src")],
+                            )?;
+                        }
                         let ap = ReduceParam {
                             vect_dim: 1,
                             dst_size: None,

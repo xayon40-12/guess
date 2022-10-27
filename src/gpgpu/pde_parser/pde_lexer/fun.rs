@@ -99,6 +99,7 @@ fn fix_constructor(
         LexerComp {
             token: func(&name, next),
             funs: vec![fix],
+            max_space_derivative_depth: 0,
         }
     })
 }
@@ -154,7 +155,7 @@ fn kt_constructor(
     let theta = theta.unwrap_or(1.1); // MUSIC default
     name.unwrap_or_else(|| current_var.clone().expect("KT call must be given the name of the variable it operate on if it is not in the context of an equation deffinition. For instance for a variable 'u' with eigenvalue of the Jacobian '2u' and for the expression 'u^2': KT[u;2u](u^2)").into()).bind(|name|
          compact(eigenvalues).bind(|eigenvalues|
-             term.map(|v| kt(name, v, eigenvalues, theta, dirs))
+             term.bind(|v| kt(name, v, eigenvalues, theta, dirs))
          ))
 }
 
@@ -201,7 +202,7 @@ fn bf_diff_constructor(
         })
         .collect::<Vec<_>>();
     (0..n).fold(term, |v, i| {
-        v.map(|v| {
+        v.bind(|v| {
             diff(
                 v,
                 if (i + start) % 2 == 0 {
