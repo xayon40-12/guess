@@ -697,7 +697,7 @@ fn extract_symbols(
             h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
         }
     }
-    h = h.add_buffer("tmp_error", Len(F64(0.0), len));
+    h = h.add_buffer("tmp_error", Len(U32(1), len));
     if init_file.len() > 0 {
         eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys())
     }
