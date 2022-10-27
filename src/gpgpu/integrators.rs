@@ -41,6 +41,8 @@ pub struct IntegratorParam {
     pub dt_max: f64,
     pub dt_factor: f64,
     pub dt_reset: f64,
+    pub max_iter: usize,
+    pub max_reset: usize,
     pub dt_name: String,
     pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
     pub args: Vec<(String, Types)>,
@@ -356,6 +358,8 @@ fn multistages_algorithm(
                     mut dt,
                     dt_max,
                     dt_factor,
+                    max_iter,
+                    max_reset,
                     dt_reset,
                     ref dt_name,
                     ref cdt_name,
@@ -405,10 +409,8 @@ fn multistages_algorithm(
                     };
                 }
 
-                let max_iter = 20;
-                let max_error_iter = 2;
                 let range = if implicit {
-                    1..=max_error_iter * max_iter
+                    1..=max_reset * max_iter
                 } else {
                     1..=1
                 };
@@ -540,7 +542,7 @@ fn multistages_algorithm(
                     if !done {
                         panic!(
                             "Implicit scheme could not converge avec {} attempts",
-                            max_error_iter
+                            max_reset
                         );
                     }
                     save!();

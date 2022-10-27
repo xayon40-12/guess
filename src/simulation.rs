@@ -53,6 +53,8 @@ pub struct Vars {
     pub dt_max: f64,
     pub dt_factor: f64,
     pub dt_reset: f64,
+    pub max_iter: usize,
+    pub max_reset: usize,
     pub dim: Dim,
     pub phy: [f64; 3],
     pub dirs: Vec<DimDir>,
@@ -196,6 +198,8 @@ impl Simulation {
             dt_max,
             dt_factor,
             dt_reset,
+            max_iter,
+            max_reset,
             dim,
             dirs: _,
             len,
@@ -215,6 +219,8 @@ impl Simulation {
             dt_max,
             dt_factor,
             dt_reset,
+            max_iter,
+            max_reset,
             dt_name: "dt".to_string(),
             cdt_name: "cdt".to_string(),
             args: vec![],
@@ -372,12 +378,16 @@ fn extract_symbols(
 
     let default_dt_factor = 1.03;
     let default_dt_reset = 0.5;
-    let (nb_stages, dt_0, dt_max, dt_factor, dt_reset, _er, creator): (
+    let default_max_iter = 20;
+    let default_max_reset = 10;
+    let (nb_stages, dt_0, dt_max, dt_factor, dt_reset, max_iter, max_reset, _er, creator): (
         usize,
         f64,
         f64,
         f64,
         f64,
+        usize,
+        usize,
         f64,
         CreatePDE,
     ) = match &param.integrator {
@@ -388,6 +398,8 @@ fn extract_symbols(
                 *dt,
                 default_dt_factor,
                 default_dt_reset,
+                default_max_iter,
+                default_max_reset,
                 0.0,
                 create_euler_pde,
             ),
@@ -397,6 +409,8 @@ fn extract_symbols(
                 *dt,
                 default_dt_factor,
                 default_dt_reset,
+                default_max_iter,
+                default_max_reset,
                 0.0,
                 create_projector_corrector_pde,
             ),
@@ -406,6 +420,8 @@ fn extract_symbols(
                 *dt,
                 default_dt_factor,
                 default_dt_reset,
+                default_max_iter,
+                default_max_reset,
                 0.0,
                 create_rk4_pde,
             ),
@@ -415,6 +431,8 @@ fn extract_symbols(
             dt_max,
             dt_factor,
             dt_reset,
+            max_iter,
+            max_reset,
             er,
             scheme,
         } => match scheme {
@@ -424,6 +442,8 @@ fn extract_symbols(
                 *dt_max,
                 *dt_factor,
                 dt_reset.unwrap_or(default_dt_reset),
+                max_iter.unwrap_or(default_max_iter),
+                max_reset.unwrap_or(default_max_reset),
                 *er,
                 create_implicit_radau_pde,
             ),
@@ -848,6 +868,8 @@ fn extract_symbols(
         dt_max,
         dt_factor,
         dt_reset,
+        max_iter,
+        max_reset,
         dim,
         dirs,
         len,
