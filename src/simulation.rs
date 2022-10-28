@@ -585,6 +585,7 @@ fn extract_symbols(
     let mut constraint_args = init_equ_args.clone();
     constraint_args.push(KCParam("dt", CF64));
     constraint_args.push(KCParam("cdt", CF64));
+    constraint_args.push(KCBuffer("__err", CF64));
     let init_equ_args: Vec<SKernelConstructor> =
         init_equ_args.into_iter().map(|a| a.into()).collect();
     let constraint_args: Vec<SKernelConstructor> =
@@ -619,6 +620,7 @@ fn extract_symbols(
             &name,
             constraint_args.clone(),
             constraint,
+            true,
         ));
     }
 
@@ -648,6 +650,7 @@ fn extract_symbols(
             &kernel_name,
             init_equ_args.clone(),
             equ,
+            true,
         ));
         equation_kernels.push(EquationKernel {
             kernel_name,
@@ -809,7 +812,8 @@ fn extract_symbols(
             }
         }
         implicit_src += &implicit_src_end;
-        implicit_src += ";\n    dst[x] = tmp;\n    err[x] = tmp>e;";
+        implicit_src +=
+            ";\n    dst[x] = tmp;\n    err[x] = (tmp*10>=e) || (tmp!=tmp) || (isinf(tmp));";
         h = h.create_kernel(SKernel {
             name: "implicit_error".into(),
             args: implicit_args.into_iter().map(|i| i.into()).collect(),
@@ -823,7 +827,7 @@ fn extract_symbols(
             src: "    dst[x] = true;".into(),
             needed: vec![],
         });
-        let mut propagate_str = "    dst[x] = ".to_string();
+        let mut propagate_str = "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = ".to_string();
         let d = dim.len();
         let dr = |i, p| {
             let mut a = [0, 0, 0, 0];
@@ -1016,6 +1020,7 @@ fn gen_single_stage_kernel(
     name: &str,
     args: Vec<SKernelConstructor>,
     eqd: EqDescriptor,
+    err: bool,
 ) -> SKernel {
     let len = eqd.expr.len();
     let mut id = "x+x_size*(y+y_size*z)".to_string();
@@ -1035,7 +1040,14 @@ fn gen_single_stage_kernel(
     SKernel {
         name: name.to_string(),
         args,
-        src: format!("    {}\n    uint _i = {};\n{}", priors, id, expr),
+        src: if err {
+            format!(
+                "    uint _i = {};\n    if(__err[_i]){{\n    {}\n{}    }}",
+                id, priors, expr
+            )
+        } else {
+            format!("    uint _i = {};\n{}\n{}", id, priors, expr)
+        },
         needed: vec![],
     }
 }
@@ -1052,7 +1064,7 @@ fn gen_init_kernel(
             name
         );
     }
-    gen_single_stage_kernel(name, args, ini)
+    gen_single_stage_kernel(name, args, ini, false)
 }
 
 fn parse_symbols(

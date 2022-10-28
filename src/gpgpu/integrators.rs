@@ -226,6 +226,7 @@ fn multistages_kernels(
         args.extend(ns.iter().map(|n| KCBuffer(&n, CF64)));
     }
     args.extend(params.iter().map(|t| KCParam(&t.0, t.1)));
+    args.push(KCBuffer("__err", CF64));
     let mut needed = pdes
         .iter()
         .map(|d| {
@@ -243,7 +244,10 @@ fn multistages_kernels(
                 (&Kernel {
                     name: &format!("{}_{}", &name, &d.dvar),
                     args: args.clone(),
-                    src: &format!("    {}\n    uint _i = {};\n{}", priors, id, expr),
+                    src: &format!(
+                        "    uint _i = {};\n    if(__err[_i]){{\n    {}\n{}    }}",
+                        id, priors, expr
+                    ),
                     needed: vec![],
                 })
                     .into(),
@@ -259,21 +263,21 @@ fn multistages_kernels(
         let argnames = (0..v.len())
             .map(|i| format!("src{}", i + 1))
             .collect::<Vec<_>>();
-        let mut src = String::new();
+        let mut sum = String::new();
         for (i, v) in v.iter().enumerate() {
             args.push(KCBuffer(&argnames[i], CF64));
             if *v != 0.0 {
-                src = format!("{} + {}*{}[i]", src, v, &argnames[i]);
+                sum = format!("{} + {}*{}[i]", sum, v, &argnames[i]);
             }
         }
-        if src.is_empty() {
-            src = "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = src[i];".to_string();
-        } else {
-            src = format!(
-                "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = src[i] + h*({});",
-                &src[3..]
-            );
+        args.push(KCBuffer("__err", CF64));
+        let mut src =
+            "    uint i = x+x_size*(y+y_size*z);\n    if(__err[i]){\n        dst[i] = src[i]"
+                .to_string();
+        if !sum.is_empty() {
+            src += &format!(" + h*({})", &sum[3..]);
         }
+        src += ";\n    }";
         let ssrc = "src".to_string();
         let eq_arg = if implicit {
             let eq_i = if i == v.len() { i - 1 } else { i }; // the last stage (using the bi) correspond to i=nb_stages=v.len(), so at that point, the last stage should be chosen for eq so nb_stages-1
@@ -286,7 +290,7 @@ fn multistages_kernels(
             }
         };
         let src_eq = format!(
-            "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = {}[i];",
+            "    uint i = x+x_size*(y+y_size*z);\n    if(__err[i]){{\n        dst[i] = {}[i];\n    }}",
             &eq_arg // TODO: optimize: use argnames[0] here and in multistages_algorithm for eq, then only alocate one buffer for them
         );
 
@@ -435,20 +439,17 @@ fn multistages_algorithm(
                 args.push(Param(t_name, t.into()));
                 args.push(Param(dt_name, dt.into()));
                 args.push(Param(cdt_name, 0.into()));
-                let t_id = args.len() - 3;
-                let dt_id = args.len() - 2;
-                let cdt_id = args.len() - 1;
+                args.push(BufArg(&bufs[error_id], "__err"));
+                let t_id = args.len() - 4;
+                let dt_id = args.len() - 3;
+                let cdt_id = args.len() - 2;
                 let argnames = (0..nb_per_stages)
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
                 macro_rules! reset_error {
-                    ($i:ident) => {
-                        h.run_arg(
-                            "reset_error",
-                            D1(d),
-                            &[BufArg(&bufs[nb_per_stages * $i + error_id], "dst")],
-                        )?;
+                    () => {
+                        h.run_arg("reset_error", D1(d), &[BufArg(&bufs[error_id], "dst")])?;
                     };
                 }
                 macro_rules! save {
@@ -460,8 +461,8 @@ fn multistages_algorithm(
                                     &bufs[nb_per_stages * i + 2 * nb_stages + (j + 1)],
                                 )?;
                             }
-                            reset_error!(i);
                         }
+                        reset_error!();
                     };
                 }
                 macro_rules! reset {
@@ -473,8 +474,8 @@ fn multistages_algorithm(
                                     &bufs[nb_per_stages * i + swap * nb_stages + (j + 1)],
                                 )?;
                             }
-                            reset_error!(i);
                         }
+                        reset_error!();
                     };
                 }
 
@@ -496,6 +497,7 @@ fn multistages_algorithm(
                                 (0..nb_stages)
                                     .map(|j| BufArg(&bufs[nb_per_stages * i + swap*nb_stages + (j + 1)], &argnames[j])),
                             );
+                            stage_args.push(BufArg(&bufs[error_id], "__err"));
                             let step = &vars[i].3;
                             let stage_name = &match step {
                                 STEP::PDE => format!("{}_stage{}", name, $s),
@@ -578,8 +580,9 @@ fn multistages_algorithm(
                                 ));
                             }
                         }
+                        let mprop = nb_propagate % 2;
                         error_args.push(BufArg(
-                            &bufs[if nb_propagate % 2 == 0 {
+                            &bufs[if mprop == 0 {
                                 error_id
                             } else {
                                 pre_constraint_id
@@ -589,11 +592,11 @@ fn multistages_algorithm(
                         error_args.push(Param("e", max_error.into()));
                         h.run_arg("implicit_error", D1(d), &error_args)?;
                         let prop = [&bufs[error_id], &bufs[pre_constraint_id]];
-                        for i in 0..nb_propagate {
+                        for i in mprop..mprop + nb_propagate {
                             h.run_arg(
                                 "propagate_error",
-                                D1(d),
-                                &[BufArg(prop[i % 2], "dst"), BufArg(prop[1 - (i % 2)], "src")],
+                                dim,
+                                &[BufArg(prop[1 - (i % 2)], "dst"), BufArg(prop[i % 2], "src")],
                             )?;
                         }
                         let ap = ReduceParam {
@@ -601,7 +604,7 @@ fn multistages_algorithm(
                             dst_size: None,
                             window: None,
                         };
-                        let dst_max = &bufs[pre_constraint_id];
+                        let dst_max = &bufs[tmpid];
                         h.run_algorithm(
                             "max",
                             D1(d),
@@ -611,6 +614,22 @@ fn multistages_algorithm(
                         )?;
                         let err = h.get_first(dst_max)?.F64();
 
+                        // h.run_algorithm(
+                        //     "sum",
+                        //     D1(d),
+                        //     &[DimDir::X],
+                        //     &[&bufs[error_id], &bufs[pre_constraint_id], dst_max],
+                        //     AlgorithmParam::Ref(&ap),
+                        // )?;
+                        // let tot_error = h.get_first(dst_max)?.F64();
+                        // println!(
+                        //     "t: {}, dt: {}, iter: {}, reset: {}, tot_error: {}",
+                        //     t, dt, iter, reset, tot_error
+                        // );
+                        // let eee = h.get(&bufs[error_id])?.VF64();
+                        // println!("err: {:?}", eee);
+
+                        reset_error!(); // FIXME: local error optimization not working, must reset error. Maybe removing entirely the local optimization would be wiser.
                         swap = 1 - swap;
                         if err < max_error {
                             done = true;
@@ -626,6 +645,7 @@ fn multistages_algorithm(
                     }
                     iter += 1;
                 }
+                reset_error!();
                 if implicit {
                     if !done {
                         panic!(
@@ -660,17 +680,17 @@ fn multistages_algorithm(
                         dst_size: None,
                         window: None,
                     };
-                    let dst_sum = &bufs[tmpid];
+                    let dst_max = &bufs[tmpid];
                     h.run_algorithm(
                         "max",
                         D1(d),
                         &[DimDir::X],
-                        &[&bufs[tmpid], &bufs[pre_constraint_id], dst_sum],
+                        &[&bufs[tmpid], &bufs[pre_constraint_id], dst_max],
                         AlgorithmParam::Ref(&ap),
                     )?;
-                    let acc = h.get_first(dst_sum)?.F64();
-                    if acc > max_accuracy {
-                        intprm.dt = dt_max.min(dt * dt_reset);
+                    let acc = h.get_first(dst_max)?.F64();
+                    if acc * dt > max_accuracy {
+                        intprm.dt = 0.9 * max_accuracy / acc;
                         intprm.swap = swap;
                         return Ok(Some(Box::new(intprm)));
                     }
