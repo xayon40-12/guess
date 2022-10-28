@@ -356,7 +356,10 @@ fn multistages_algorithm(
         });
     let nb_stages = scheme.aij.len(); // +1 for bij
     let nb_per_stages = 3 + 3 * nb_stages;
+    let tmpid = nb_per_stages - 1;
+    let pre_constraint_id = nb_per_stages - 2;
     let mut len = nb_per_stages * vars.len() + 1; // +1 for the error buffer
+    let error_id = len - 1;
     let nb_pde_buffers = len;
     if let Some(ns) = &needed_buffers {
         len += ns.len();
@@ -365,9 +368,6 @@ fn multistages_algorithm(
         panic!("In a multistages algorithms the scheme must be well formed: the coefficient table 'aij' must be square along with the end sum vector 'bj' that must be the same length as the table. The second sum vuctor use to predict the time step must be the same size as well if provided.")
     }
 
-    let tmpid = nb_per_stages - 1;
-    let pre_constraint_id = nb_per_stages - 2;
-    let error_id = nb_per_stages - 3;
     let (max_error, implicit) = match integrator {
         Integrator::Explicit { .. } => (0.0, false),
         Integrator::Implicit { er, .. } => (er, true),
@@ -593,7 +593,7 @@ fn multistages_algorithm(
                             h.run_arg(
                                 "propagate_error",
                                 D1(d),
-                                &[BufArg(prop[1 - i % 2], "dst"), BufArg(prop[i % 2], "src")],
+                                &[BufArg(prop[i % 2], "dst"), BufArg(prop[1 - (i % 2)], "src")],
                             )?;
                         }
                         let ap = ReduceParam {
@@ -601,15 +601,16 @@ fn multistages_algorithm(
                             dst_size: None,
                             window: None,
                         };
-                        let dst_sum = &bufs[tmpid];
+                        let dst_max = &bufs[pre_constraint_id];
                         h.run_algorithm(
                             "max",
                             D1(d),
                             &[DimDir::X],
-                            &[&bufs[tmpid], &bufs[pre_constraint_id], dst_sum],
+                            &[&bufs[tmpid], &bufs[pre_constraint_id], dst_max],
                             AlgorithmParam::Ref(&ap),
                         )?;
-                        let err: f64 = h.get_first(dst_sum)?.F64();
+                        let err = h.get_first(dst_max)?.F64();
+
                         swap = 1 - swap;
                         if err < max_error {
                             done = true;

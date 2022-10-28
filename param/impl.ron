@@ -6,7 +6,7 @@ Param(
     //(Correlation(["nb"],Radial), At(3)),
   ],
   config: (t_0: Some(0), t_max: 3, dim: D2((32,10),(1000,0))),
-  integrator: Implicit(dt_max: 1e-1, dt_factor: Some(50), dt_reset: Some(0.01), max_iter: Some(10), er: 1e-3, scheme: RadauIIA2),
+  integrator: Implicit(dt_max: 1e-2, dt_factor: Some(50), dt_reset: Some(0.01), max_iter: Some(10), er: 1e-3, scheme: RadauIIA2),
   default_boundary: Some("periodic"),
   noises: Some([Normal(name: "xi")]),
   //fields: [(name: "nb", boundary: "periodic")],
