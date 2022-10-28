@@ -671,7 +671,7 @@ pub mod ir_helper {
         LexerComp {
             token,
             funs: vec![],
-            max_space_derivative_depth: 1,
+            max_space_derivative_depth: 2, // 2 because KT is symetric
         }
     }
 
