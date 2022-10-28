@@ -8,9 +8,8 @@ Param(
   integrator: Explicit(dt: 1e-3, scheme: RK4),
   default_boundary: Some("periodic"),
   noises: Some([Normal(name: "xi", dim: Some(3))]),
-  symbols: [
-    "nc = 0.333333
+  symbols: "
+    nc = 0.333333
     nb' = 1 + #^2nb + # xi 
     *nb = nc",
-  ],
 )

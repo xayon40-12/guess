@@ -367,6 +367,7 @@ fn extract_symbols(
     h = h.load_kernel("vcminus");
     h = h.load_kernel("moments_to_cumulants");
     h = h.load_function("ifNaNInf");
+    h = h.load_function("fmaxNaNInf");
 
     let mut consts = HashMap::new();
     let mut dxyz = 1.0;
@@ -382,10 +383,10 @@ fn extract_symbols(
     consts.insert("dxyz".to_string(), dxyz.to_string());
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
-    let default_dt_factor = 1.1;
-    let default_dt_reset = 0.5;
-    let default_max_iter = 20;
-    let default_max_reset = 100;
+    let default_dt_factor = 50.0;
+    let default_dt_reset = 0.01;
+    let default_max_iter = 10;
+    let default_max_reset = 30;
     let (nb_stages, dt_0, dt_max, dt_factor, dt_reset, max_iter, max_reset, _er, creator): (
         usize,
         f64,
@@ -802,7 +803,7 @@ fn extract_symbols(
                 if i == vars.len() - 1 && s == nb_stages - 1 {
                     implicit_src += &tmp;
                 } else {
-                    implicit_src += &format!("fmax({},", tmp);
+                    implicit_src += &format!("fmaxNaNInf({},", tmp);
                     implicit_src_end += ")";
                 }
             }

@@ -1,14 +1,14 @@
 Param(
-  actions: [(RawData(["tT00","tT01","tT02","e","ut","ux","uy"]), Interval(from: 1, to: 10, every: 0.1))],
-  config: (t_0: Some(1), t_max: 10, dim: D2S((51,10))),
-  integrator: Implicit(dt_0: 1e-10, dt_max: 1e-1, dt_factor: 1.03, dt_reset: Some(0.5), max_iter: Some(100), er: 1e-3, scheme: RadauIIA2),
+  actions: [(RawData(["tT00","tT01","tT02","e","ut","ux","uy"]), Interval(from: 1, to: 11, every: 0.1))],
+  config: (t_0: Some(1), t_max: 10, dim: D2S((101,10))),
+  integrator: Implicit(dt_max: 1e-1, er: 1e-3, scheme: RadauIIA2),
   symbols: "
       p(e) := e/3.0
       pp(e) := 1.0/3.0
       vs2 := pp(e)
-      eigk(e,ut,uk) := (fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2)
+      eigk(e,ut,uk) := fabs((fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2))
       vk(ut,uk) := fabs(uk/ut)
-      eig(e,ut,ux) := fmax(eigk(e,ut,ux),vk(ut,ux))
+      eig(e,ut,uk) := fmax(eigk(e,ut,uk),vk(ut,uk))
       f00(e,t,ut,ux,uy) := ((e+p(e))*ut*ut - p(e))
       f10(e,t,ut,ux,uy) := ((e+p(e))*ux*ut)
       f20(e,t,ut,ux,uy) := ((e+p(e))*uy*ut)
@@ -21,9 +21,10 @@ Param(
       tT00' = -t*(#KT_x[eig(e,ut,ux)](f10(vars)) + #KT_y[eig(e,ut,uy)](f20(vars))) - f33(vars) 
       tT01' = -t*(#KT_x[eig(e,ut,ux)](f11(vars)) + #KT_y[eig(e,ut,uy)](f21(vars)))
       tT02' = -t*(#KT_x[eig(e,ut,ux)](f12(vars)) + #KT_y[eig(e,ut,uy)](f22(vars)))
-      e'| = (tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*p(e)))/t - e
-      e'c = max(1e-10,e)
+      e'| = (tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*p(e)))/t
+      e'c = fmax(e,1e-10)
       ut'| = sqrt((tT00/t+p(e))/(e+p(e)))
+      ut'c = fmax(ut,1)
       ux'| = tT01/((e+p(e))*ut*t)
       uy'| = tT02/((e+p(e))*ut*t)
       e0 = 1

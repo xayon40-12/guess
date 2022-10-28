@@ -4,8 +4,7 @@ Param(
   ],
   config: (t_max: 1, dim: D1((200,20))),
   integrator: Explicit(dt: 1e-3, scheme: RK4),
-  symbols: [
-    "u' = -1*#KT_x (5*u)
+  symbols: "
+     u' = -1*#KT_x (5*u)
      *u := x<30 ? 10 : 0",
-  ],
 )

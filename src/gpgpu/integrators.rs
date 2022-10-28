@@ -478,11 +478,6 @@ fn multistages_algorithm(
                     };
                 }
 
-                let range = if implicit {
-                    1..=max_reset * max_iter
-                } else {
-                    1..=1
-                };
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
@@ -532,7 +527,9 @@ fn multistages_algorithm(
                     };
                 }
                 let mut done = false;
-                for l in range {
+                let mut reset = 1;
+                let mut iter = 1;
+                while reset <= max_reset {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
                         let mut pred = vec![];
@@ -617,11 +614,16 @@ fn multistages_algorithm(
                         if err < max_error {
                             done = true;
                             break;
-                        } else if l % max_iter == 0 {
+                        } else if iter == reset * max_iter {
                             dt *= dt_reset;
+                            reset += 1;
+                            iter = 1;
                             reset!();
                         }
+                    } else {
+                        reset = max_reset + 1; // WARING: this is a trick for explicit
                     }
+                    iter += 1;
                 }
                 if implicit {
                     if !done {

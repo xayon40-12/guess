@@ -138,6 +138,14 @@ pub fn functions() -> HashMap<&'static str, Function<'static>> {
             needed: vec![],
         },
 
+        Function {
+            name: "fmaxNaNInf",
+            args: vec![FCParam("x",CF64),FCParam("y",CF64)],
+            ret_type: Some(CF64),
+            src: "    if(x!=x || isinf(x)) {{ return x; }} else {{ if(y!=y || isinf(y)) {{ return y; }} else {{ return fmax(x,y); }} }}",
+            needed: vec![],
+        },
+
     ].into_iter().map(|f| (f.name,f)).collect()
 }
 
