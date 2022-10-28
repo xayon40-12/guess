@@ -382,10 +382,10 @@ fn extract_symbols(
     consts.insert("dxyz".to_string(), dxyz.to_string());
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
-    let default_dt_factor = 1.03;
+    let default_dt_factor = 1.1;
     let default_dt_reset = 0.5;
     let default_max_iter = 20;
-    let default_max_reset = 10;
+    let default_max_reset = 100;
     let (nb_stages, dt_0, dt_max, dt_factor, dt_reset, max_iter, max_reset, _er, creator): (
         usize,
         f64,
@@ -444,9 +444,9 @@ fn extract_symbols(
         } => match scheme {
             Implicit::RadauIIA2 => (
                 2,
-                *dt_0,
+                dt_0.unwrap_or(*dt_max),
                 *dt_max,
-                *dt_factor,
+                dt_factor.unwrap_or(default_dt_factor),
                 dt_reset.unwrap_or(default_dt_reset),
                 max_iter.unwrap_or(default_max_iter),
                 max_reset.unwrap_or(default_max_reset),
@@ -794,7 +794,7 @@ fn extract_symbols(
         for i in 0..vars.len() {
             for s in 0..nb_stages {
                 let tmp = format!(
-                    "ifNaNInf(fabs({n}_fk{s}[x]-{n}_k{s}[x])/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 0)",
+                    "fabs({n}_fk{s}[x]-{n}_k{s}[x])*ifNaNInf(1/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 1)",
                     //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
                     n = vars[i],
                     s = s

@@ -188,19 +188,21 @@ fn accuracy_kernel(vars: &Vec<SPDE>, nb_stages: usize, bbs: Vec<f64>) -> SNeeded
         }
     }
     let mut src = "    double tmp = ".to_string();
+    let mut src_end = "".to_string();
     for i in 0..vars.len() {
-        if i < vars.len() - 1 {
-            src += "fmax(";
-        }
-        src += "fabs(";
+        let mut tmp = "fabs(".to_string();
         for s in 0..nb_stages {
-            src += &format!("{}*{n}_k{s}[x]", bbs[s], n = vars[i].dvar, s = s);
+            tmp += &format!("{}*{n}_k{s}[x]", bbs[s], n = vars[i].dvar, s = s);
         }
+        tmp += ")";
         if i < vars.len() - 1 {
-            src += ")";
+            src += &format!("fmax({},", tmp);
+            src_end += ")";
+        } else {
+            src += &tmp;
         }
-        src += ")";
     }
+    src += &src_end;
     src += ";";
     NewKernel(SKernel {
         name: "accuracy".into(),

@@ -29,9 +29,9 @@ pub enum Integrator {
         scheme: Explicit,
     },
     Implicit {
-        dt_0: f64,
+        dt_0: Option<f64>,
         dt_max: f64,
-        dt_factor: f64,
+        dt_factor: Option<f64>,
         dt_reset: Option<f64>,
         max_iter: Option<usize>,
         max_reset: Option<usize>,

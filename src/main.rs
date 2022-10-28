@@ -1,6 +1,8 @@
 use crate::fuse::fuse;
 use clap::{App, Arg, SubCommand};
 use guess::*;
+use ocl::error::Error::OclCore;
+use ocl::OclCoreError::ProgramBuild;
 use regex::Regex;
 use simulation::NumType::*;
 
@@ -69,7 +71,18 @@ fn main() -> crate::gpgpu::Result<()> {
     let run_sim = |params: Vec<&str>| -> crate::gpgpu::Result<()> {
         for param in params {
             let (param, num) = extract(param);
-            Simulation::from_param(&param, num, false)?;
+            match Simulation::from_param(&param, num, false) {
+                Err(OclCore(ProgramBuild(log))) => {
+                    eprintln!(
+                        "Error while processing param \"{}\":\nBuild error:\n{}",
+                        param, log
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Error while processing param \"{}\":\n{:?}", param, e);
+                }
+                _ => {}
+            }
         }
 
         Ok(())
