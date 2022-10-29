@@ -721,6 +721,7 @@ fn multistages_algorithm(
                         AlgorithmParam::Ref(&ap),
                     )?;
                     let acc = h.get_first(dst_max)?.F64();
+                    //println!("t: {:.3e}, dt: {:.3e}, acc: {:.3e}", t, dt, acc);
                     if acc * dt > max_accuracy {
                         intprm.dt = 0.9 * max_accuracy / acc;
                         intprm.swap = swap;
