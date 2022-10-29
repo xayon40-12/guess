@@ -1,14 +1,17 @@
 Param(
   actions: [(RawData(["tT00","tT01","tT02","e","ut","ux","uy"]), Interval(from: 1, to: 10, every: 0.1))],
   config: (t_0: Some(1), t_max: 10, dim: D2S((51,10))),
-  integrator: Explicit(dt: 1e-3, scheme: PC),
+  default_boundary: Some("ghost"),
+  integrator: Explicit(dt: 1e-2, scheme: PC),
   symbols: "
       p(e) := e/3.0
       pp(e) := 1.0/3.0
       vs2 := pp(e)
       eigk(e,ut,uk) := (fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2)
       vk(ut,uk) := fabs(uk/ut)
+      //eig(e,ut,uk) := (eigk(e,ut,uk)==0?0:1)*max(eigk(e,ut,uk),vk(ut,uk))*(eigk(e,ut,uk)>1?0.0/0.0:1)
       eig(e,ut,uk) := max(eigk(e,ut,uk),vk(ut,uk))
+      f00(e,t,ut,ux,uy) := ((e+p(e))*ut*ut - p(e))
       f10(e,t,ut,ux,uy) := ((e+p(e))*ux*ut)
       f20(e,t,ut,ux,uy) := ((e+p(e))*uy*ut)
       f11(e,t,ut,ux,uy) := ((e+p(e))*ux*ux + p(e))

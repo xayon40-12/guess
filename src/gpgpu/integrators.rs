@@ -281,7 +281,7 @@ fn multistages_kernels(
             if i == 0 {
                 &ssrc
             } else {
-                &argnames[i - 1] // WARNING: for some reason the values in argnames on the gpu are always 0
+                &argnames[i - 1]
             }
         };
         let src_eq = format!(
@@ -482,7 +482,7 @@ fn multistages_algorithm(
                         args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
                         for &i in $r {
                             let constraint = &vars[i].4;
-                            let dst_buf = &bufs[nb_per_stages * i + if constraint.is_some() { pre_constraint_id } else if $s == nb_stages { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
+                            let dst_buf = &bufs[nb_per_stages * i + if constraint.is_some() { pre_constraint_id } else if $s == nb_stages && (!is_accuracy || implicit) { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
                             let mut stage_args = vec![
                                 BufArg(dst_buf,"dst",),
                                 BufArg(&bufs[nb_per_stages * i ], "src"),
@@ -507,7 +507,7 @@ fn multistages_algorithm(
 
                         for &i in $r {
                             let constraint = &vars[i].4;
-                            let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages { 0 } else { tmpid }];
+                            let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages && (!is_accuracy || implicit) { 0 } else { tmpid }];
                             if let Some(constraint_name) = constraint {
                                 args[0] = BufArg(dst_buf, "dst");
                                 for i in 0..vars.len() {
@@ -526,19 +526,33 @@ fn multistages_algorithm(
                 let mut done = false;
                 let mut reset = 1;
                 let mut iter = 1;
+                let coefs = scheme
+                    .aij
+                    .clone()
+                    .into_iter()
+                    .chain([scheme.bj.clone()])
+                    .collect::<Vec<_>>();
                 while reset <= max_reset {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
                         let mut pred = vec![];
+                        let mut between = 0;
                         for r in &vars_ranges {
-                            stage!(s, r, scheme.aij[s], pred);
+                            if s == 0 || implicit {
+                                stage!(s, r, coefs[s + between], pred);
+                            }
                             for &i in r {
                                 args[0] = BufArg(
                                     &bufs[nb_per_stages * i + dst_swap * nb_stages + (s + 1)],
                                     "dst",
                                 );
                                 for i in 0..vars.len() {
-                                    let pos = if s == 0 && !pred.contains(&i) {
+                                    let pos = if s == 0 && !pred.contains(&i)
+                                        || (!implicit
+                                            && s == nb_stages - 1
+                                            && pred.contains(&i)
+                                            && !is_accuracy)
+                                    {
                                         0
                                     } else {
                                         tmpid
@@ -547,6 +561,11 @@ fn multistages_algorithm(
                                         BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
                                 }
                                 h.run_arg(&vars[i].0, dim, &args)?;
+                            }
+                            between = 1;
+                            if !implicit {
+                                let s = s + 1;
+                                stage!(s, r, coefs[s], pred);
                             }
                         }
                     }
@@ -610,18 +629,18 @@ fn multistages_algorithm(
                         )?;
                         let err = h.get_first(dst_max)?.F64();
 
-                        h.run_algorithm(
-                            "sum",
-                            D1(d),
-                            &[DimDir::X],
-                            &[&bufs[error_id], &bufs[pre_constraint_id], dst_max],
-                            AlgorithmParam::Ref(&ap),
-                        )?;
-                        let tot_error = h.get_first(dst_max)?.F64();
-                        println!(
-                            "t: {}, dt: {}, iter: {}, reset: {}, tot_error: {}",
-                            t, dt, iter, reset, tot_error
-                        );
+                        // h.run_algorithm(
+                        //     "sum",
+                        //     D1(d),
+                        //     &[DimDir::X],
+                        //     &[&bufs[error_id], &bufs[pre_constraint_id], dst_max],
+                        //     AlgorithmParam::Ref(&ap),
+                        // )?;
+                        // let tot_error = h.get_first(dst_max)?.F64();
+                        // println!(
+                        //     "t: {}, dt: {}, iter: {}, reset: {}, tot_error: {}",
+                        //     t, dt, iter, reset, tot_error
+                        // );
 
                         swap = 1 - swap;
                         if err < max_error {
@@ -687,10 +706,19 @@ fn multistages_algorithm(
                         intprm.swap = swap;
                         return Ok(Some(Box::new(intprm)));
                     }
+
+                    if !implicit {
+                        // if explicit and accuracy then copy everything from tmpid to 0 (the end value)
+                        for i in 0..vars.len() {
+                            h.copy(&bufs[nb_per_stages * i + tmpid], &bufs[nb_per_stages * i])?;
+                        }
+                    }
                 }
-                for r in &vars_ranges {
+                if implicit {
                     let mut pred = vec![];
-                    stage!(nb_stages, r, scheme.bj, pred);
+                    for r in &vars_ranges {
+                        stage!(nb_stages, r, scheme.bj, pred);
+                    }
                 }
 
                 intprm.dt = dt_max.min(dt * dt_factor);
