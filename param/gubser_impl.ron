@@ -1,6 +1,6 @@
 Param(
   actions: [(RawData(["tT00","tT01","tT02","e","ut","ux","uy"]), Interval(from: 1, to: 11, every: 0.1))],
-  config: (t_0: Some(1), t_max: 10, dim: D2S((201,10))),
+  config: (t_0: Some(1), t_max: 10, dim: D2S((51,10))),
   integrator: Implicit(dt_max: 1e-1, er: 1e-2, scheme: RadauIIA2),
   symbols: "
       p(e) := e/3.0

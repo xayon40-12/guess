@@ -620,7 +620,6 @@ fn extract_symbols(
             &name,
             constraint_args.clone(),
             constraint,
-            true,
         ));
     }
 
@@ -650,7 +649,6 @@ fn extract_symbols(
             &kernel_name,
             init_equ_args.clone(),
             equ,
-            true,
         ));
         equation_kernels.push(EquationKernel {
             kernel_name,
@@ -1020,7 +1018,6 @@ fn gen_single_stage_kernel(
     name: &str,
     args: Vec<SKernelConstructor>,
     eqd: EqDescriptor,
-    err: bool,
 ) -> SKernel {
     let len = eqd.expr.len();
     let mut id = "x+x_size*(y+y_size*z)".to_string();
@@ -1040,14 +1037,7 @@ fn gen_single_stage_kernel(
     SKernel {
         name: name.to_string(),
         args,
-        src: if err {
-            format!(
-                "    uint _i = {};\n    if(__err[_i]){{\n    {}\n{}    }}",
-                id, priors, expr
-            )
-        } else {
-            format!("    uint _i = {};\n{}\n{}", id, priors, expr)
-        },
+        src: format!("    uint _i = {};\n{}\n{}", id, priors, expr),
         needed: vec![],
     }
 }
@@ -1064,7 +1054,7 @@ fn gen_init_kernel(
             name
         );
     }
-    gen_single_stage_kernel(name, args, ini, false)
+    gen_single_stage_kernel(name, args, ini)
 }
 
 fn parse_symbols(
