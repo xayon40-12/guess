@@ -811,7 +811,7 @@ fn extract_symbols(
         }
         implicit_src += &implicit_src_end;
         implicit_src +=
-            ";\n    dst[x] = tmp;\n    err[x] = (tmp*10>=e) || (tmp!=tmp) || (isinf(tmp));";
+            ";\n    dst[x] = tmp;\n    err[x] = (tmp>=e) || (tmp!=tmp) || (isinf(tmp));";
         h = h.create_kernel(SKernel {
             name: "implicit_error".into(),
             args: implicit_args.into_iter().map(|i| i.into()).collect(),

@@ -417,7 +417,7 @@ fn multistages_algorithm(
                     max_iter,
                     max_reset,
                     dt_reset,
-                    nb_propagate,
+                    nb_propagate: _,
                     ref dt_name,
                     ref cdt_name,
                     args: iargs,
@@ -442,11 +442,11 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
-                macro_rules! reset_error {
-                    () => {
-                        h.run_arg("reset_error", D1(d), &[BufArg(&bufs[error_id], "dst")])?;
-                    };
-                }
+                // macro_rules! reset_error {
+                //     () => {
+                //         h.run_arg("reset_error", D1(d), &[BufArg(&bufs[error_id], "dst")])?;
+                //     };
+                // }
                 macro_rules! save {
                     () => {
                         for i in 0..vars.len() {
@@ -457,7 +457,7 @@ fn multistages_algorithm(
                                 )?;
                             }
                         }
-                        reset_error!();
+                        // reset_error!();
                     };
                 }
                 macro_rules! reset {
@@ -470,7 +470,7 @@ fn multistages_algorithm(
                                 )?;
                             }
                         }
-                        reset_error!();
+                        // reset_error!();
                     };
                 }
 
@@ -638,7 +638,7 @@ fn multistages_algorithm(
                     }
                     iter += 1;
                 }
-                reset_error!();
+                //reset_error!();
                 if implicit {
                     if !done {
                         panic!(
