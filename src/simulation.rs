@@ -578,16 +578,29 @@ fn extract_symbols(
 
     let mut init_kernels = vec![];
 
+    let vars_names = dvars
+        .iter()
+        .map(|pde| pde.0.clone())
+        .collect::<Vec<String>>();
+    let o_vars_names = vars_names
+        .iter()
+        .map(|v| format!("_{}", v))
+        .collect::<Vec<String>>();
+
     let mut init_equ_args = vec![KCBuffer("dst", CF64)];
     init_equ_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
     init_equ_args.extend(noises_names.iter().map(|n| KCBuffer(&n, CF64)));
     init_equ_args.push(KCParam("t", CF64));
-    let mut constraint_args = init_equ_args.clone();
+    let init_equ_args: Vec<SKernelConstructor> =
+        init_equ_args.into_iter().map(|a| a.into()).collect();
+    let mut constraint_args = vec![KCBuffer("dst", CF64)];
+    constraint_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
+    constraint_args.extend(o_vars_names.iter().map(|n| KCBuffer(n, CF64)));
+    constraint_args.extend(noises_names.iter().map(|n| KCBuffer(n, CF64)));
+    constraint_args.push(KCParam("t", CF64));
     constraint_args.push(KCParam("dt", CF64));
     constraint_args.push(KCParam("cdt", CF64));
     constraint_args.push(KCBuffer("__err", CF64));
-    let init_equ_args: Vec<SKernelConstructor> =
-        init_equ_args.into_iter().map(|a| a.into()).collect();
     let constraint_args: Vec<SKernelConstructor> =
         constraint_args.into_iter().map(|a| a.into()).collect();
 
@@ -1025,11 +1038,11 @@ fn gen_single_stage_kernel(
         id = format!("{}*({})", len, id);
     }
     let expr = if len == 1 {
-        format!("    dst[_i] = {};\n", &eqd.expr[0])
+        format!("    dst[__i] = {};\n", &eqd.expr[0])
     } else {
         let mut expr = String::new();
         for i in 0..len {
-            expr += &format!("    dst[{i}+_i] = {};\n", &eqd.expr[i], i = i);
+            expr += &format!("    dst[{i}+__i] = {};\n", &eqd.expr[i], i = i);
         }
         expr
     };
@@ -1037,7 +1050,7 @@ fn gen_single_stage_kernel(
     SKernel {
         name: name.to_string(),
         args,
-        src: format!("    uint _i = {};\n{}\n{}", id, priors, expr),
+        src: format!("    uint __i = {};\n{}\n{}", id, priors, expr),
         needed: vec![],
     }
 }
@@ -1116,6 +1129,9 @@ fn parse_symbols(
             .or(search_betweenpde.captures(l))
         {
             let name = &caps[1];
+            if name.starts_with("_") {
+                panic!("names starting with un '_' are reserved, the name \"{}\" is invalide, please remove the leading underscores.", name);
+            }
             if dpdes.iter().filter(|i| i.var_name == name).count() == 0 {
                 // if a pde is not referenced add it to the known pdes with default
                 // vec_dim of one and the default boundary function

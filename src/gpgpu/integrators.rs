@@ -221,7 +221,16 @@ fn multistages_kernels(
     implicit: bool,
 ) -> Vec<SNeeded> {
     let mut args = vec![KCBuffer("dst", CF64)];
-    args.extend(pdes.iter().map(|pde| KCBuffer(&pde.dvar, CF64)));
+    let vars_names = pdes
+        .iter()
+        .map(|pde| pde.dvar.clone())
+        .collect::<Vec<String>>();
+    let o_vars_names = vars_names
+        .iter()
+        .map(|v| format!("_{}", v))
+        .collect::<Vec<String>>();
+    args.extend(vars_names.iter().map(|n| KCBuffer(&n, CF64)));
+    args.extend(o_vars_names.iter().map(|n| KCBuffer(&n, CF64)));
     if let Some(ns) = &needed_buffers {
         args.extend(ns.iter().map(|n| KCBuffer(&n, CF64)));
     }
@@ -332,6 +341,11 @@ fn multistages_algorithm(
             )
         })
         .collect::<Vec<_>>();
+    let vars_names = vars.iter().map(|v| v.1.clone()).collect::<Vec<String>>();
+    let o_vars_names = vars_names
+        .iter()
+        .map(|v| format!("_{}", v))
+        .collect::<Vec<String>>();
     let mut vars_ranges = vars
         .iter()
         .enumerate()
@@ -422,7 +436,7 @@ fn multistages_algorithm(
                     ref cdt_name,
                     args: iargs,
                 } = intprm.clone();
-                let mut args = vec![BufArg("", ""); vars.len() + 1];
+                let mut args = vec![BufArg("", ""); 2 * vars.len() + 1];
                 if let Some(ns) = &needed_buffers {
                     let mut i = nb_pde_buffers;
                     for n in ns {
@@ -511,12 +525,13 @@ fn multistages_algorithm(
                             if let Some(constraint_name) = constraint {
                                 args[0] = BufArg(dst_buf, "dst");
                                 for i in 0..vars.len() {
-                                    let pos = if vars[i].4.is_some() && $pred.contains(&i) { pre_constraint_id } else if ($s == nb_stages && $pred.contains(&i)) || ($s == 0 && !$pred.contains(&i)) {
+                                    let pos = if vars[i].4.is_some() && $pred.contains(&i) { pre_constraint_id } else if ($s == nb_stages && $pred.contains(&i)) || (!implicit && !is_accuracy && $s == 0 && !$pred.contains(&i)) {
                                         0
                                     } else {
                                         tmpid
                                     };
-                                    args[i+1] = BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
+                                    args[i+1] = BufArg(&bufs[nb_per_stages * i + pos], &vars_names[i]);
+                                    args[i+1+vars.len()] = BufArg(&bufs[nb_per_stages * i], &o_vars_names[i]);
                                 }
                                 h.run_arg(constraint_name, D1(d * vars[i].2), &args)?;
                             }
@@ -558,7 +573,9 @@ fn multistages_algorithm(
                                         tmpid
                                     };
                                     args[1 + i] =
-                                        BufArg(&bufs[nb_per_stages * i + pos], &vars[i].1);
+                                        BufArg(&bufs[nb_per_stages * i + pos], &vars_names[i]);
+                                    args[i + 1 + vars.len()] =
+                                        BufArg(&bufs[nb_per_stages * i], &o_vars_names[i]);
                                 }
                                 h.run_arg(&vars[i].0, dim, &args)?;
                             }
@@ -575,8 +592,11 @@ fn multistages_algorithm(
                         for i in 0..vars.len() {
                             error_args_names.push(
                                 (0..nb_stages)
-                                    .map(|s| format!("{}_k{}", vars[i].1, s))
-                                    .chain((0..nb_stages).map(|s| format!("{}_fk{}", vars[i].1, s)))
+                                    .map(|s| format!("{}_k{}", vars_names[i], s))
+                                    .chain(
+                                        (0..nb_stages)
+                                            .map(|s| format!("{}_fk{}", vars_names[i], s)),
+                                    )
                                     .collect::<Vec<_>>(),
                             );
                         }
@@ -674,7 +694,7 @@ fn multistages_algorithm(
                     for i in 0..vars.len() {
                         accuracy_args_names.push(
                             (0..nb_stages)
-                                .map(|s| format!("{}_k{}", vars[i].1, s))
+                                .map(|s| format!("{}_k{}", vars_names[i], s))
                                 .collect::<Vec<_>>(),
                         );
                     }
