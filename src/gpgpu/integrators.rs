@@ -246,7 +246,7 @@ fn multistages_kernels(
             }
             let mut expr = String::new();
             for i in 0..len {
-                expr += &format!("    dst[{i}+_i] = {};\n", &d.expr[i], i = i);
+                expr += &format!("    dst[{i}+__i] = {};\n", &d.expr[i], i = i);
             }
             let priors = d.priors.join("\n    ");
             NewKernel(
@@ -254,7 +254,7 @@ fn multistages_kernels(
                     name: &format!("{}_{}", &name, &d.dvar),
                     args: args.clone(),
                     src: &format!(
-                        "    uint _i = {};\n    if(__err[_i]){{\n    {}\n{}    }}",
+                        "    uint __i = {};\n    if(__err[__i]){{\n    {}\n{}    }}",
                         id, priors, expr
                     ),
                     needed: vec![],
@@ -280,7 +280,7 @@ fn multistages_kernels(
             }
         }
         args.push(KCBuffer("__err", CF64));
-        let mut src = "    uint i = x+x_size*(y+y_size*z);\n        dst[i] = src[i]".to_string();
+        let mut src = "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = src[i]".to_string();
         if !sum.is_empty() {
             src += &format!(" + h*({})", &sum[3..]);
         }
@@ -297,7 +297,7 @@ fn multistages_kernels(
             }
         };
         let src_eq = format!(
-            "    uint i = x+x_size*(y+y_size*z);\n    dst[i] = {}[i];",
+            "    uint i = x+x_size*(y+y_size*z);\n   dst[i] = {}[i];",
             &eq_arg // TODO: optimize: use argnames[0] here and in multistages_algorithm for eq, then only alocate one buffer for them
         );
 
@@ -591,7 +591,7 @@ fn multistages_algorithm(
                         }
                     }
                     if implicit {
-                        let mut error_args = vec![BufArg(&bufs[tmpid], "dst")];
+                        let mut error_args = vec![];
                         let mut error_args_names = vec![];
                         for i in 0..vars.len() {
                             error_args_names.push(
@@ -627,7 +627,6 @@ fn multistages_algorithm(
                             }],
                             "err",
                         ));
-                        //error_args.push(BufArg(&bufs[error_id], "err"));
                         error_args.push(Param("e", max_error.into()));
                         h.run_arg("implicit_error", D1(d), &error_args)?;
                         let prop = [&bufs[error_id], &bufs[pre_constraint_id]];
@@ -644,14 +643,6 @@ fn multistages_algorithm(
                             window: None,
                         };
                         let dst_max = &bufs[pre_constraint_id];
-                        // h.run_algorithm(
-                        //     "max",
-                        //     D1(d),
-                        //     &[DimDir::X],
-                        //     &[&bufs[tmpid], &bufs[pre_constraint_id], dst_max],
-                        //     AlgorithmParam::Ref(&ap),
-                        // )?;
-                        // let err = h.get_first(dst_max)?.F64();
 
                         h.run_algorithm(
                             "sum",
@@ -662,8 +653,8 @@ fn multistages_algorithm(
                         )?;
                         let tot_error = h.get_first(dst_max)?.F64();
                         // println!(
-                        //     "t: {:.3e}, dt: {:.3e}, iter: {}, reset: {}, tot_error: {}, err: {:.3e}, max_error: {:.3e}",
-                        //     t, dt, iter, reset, tot_error, err, max_error
+                        //     "t: {:.3e}, dt: {:.3e}, iter: {}, reset: {}, tot_error: {}, max_error: {:.3e}",
+                        //     t, dt, iter, reset, tot_error, max_error
                         // );
                         // println!("reset: {}", reset);
 

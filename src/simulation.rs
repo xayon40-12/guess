@@ -804,7 +804,7 @@ fn extract_symbols(
             })
             .collect::<Vec<String>>();
 
-        let mut implicit_args = vec![KCBuffer("dst", CF64)];
+        let mut implicit_args = vec![];
         let mut error_args_names = vec![];
         for i in 0..vars.len() {
             error_args_names.push(
@@ -844,8 +844,7 @@ fn extract_symbols(
             }
         }
         implicit_src += &implicit_src_end;
-        implicit_src +=
-            ";\n    dst[x] = tmp;\n    err[x] = (tmp>=e) || (tmp!=tmp) || (isinf(tmp));";
+        implicit_src += ";\n    err[x] = (tmp>=e) || (tmp!=tmp) || (isinf(tmp));";
         h = h.create_kernel(SKernel {
             name: "implicit_error".into(),
             args: implicit_args.into_iter().map(|i| i.into()).collect(),

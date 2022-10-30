@@ -1,31 +1,26 @@
 #!/bin/zsh
 
 tt=5
+mkdir -p results
 
-if [ ! -f expl ]; then
-	echo "# n count maxerror toterror meanerror" > expl
+if [ ! -f results/expl ]; then
+	echo "# n count maxerror toterror meanerror" > results/expl
 fi
 
-for i in */; do 
+for i in *_*/; do 
 	dt=$(echo $i | sed 's/.*_\(.*\)dt_.*/\1/')
 	n=$(echo $i | sed 's/.*_\(.*\)n_.*/\1/')
 	t=$(awk -F'|' '$1>='$tt $i/raw.txt | head -n 1 | cut -d '|' -f 1)
 	c=$(echo -n $(( $t/$dt )) | xargs -0 printf "%.0f")
 	if [ ! -f e_${n}n_${c}c ]; then
-		awk -F'|' '$2=="e"' $i/raw.txt | tail -n 1 | cut -d '|' -f 4 | tr ' ' '\n' | awk '{l=NR-1; n='$n'; x=(int(l/n)/n-0.5)*10+1/n; y=((l%n)/n-0.5)*10+1/n; print x, y, $1}' > e_${n}n_${c}c
-		cat e_${n}n_${c}c | cut -d ' ' -f 1,2 | awk '{print $1, $2, '$t'}'| gubser | paste e_${n}n_${c}c - | sponge e_${n}n_${c}c
-		toterror=$(cat e_${n}n_${c}c | awk 'func max(a,b){return a>b?a:b}func abs(x){return x<0?-x:x}BEGIN{s=0;}{s=s+abs(($4-$3)/max($4,$3));}END{print s}')
-		maxerror=$(cat e_${n}n_${c}c | awk 'func max(a,b){return a>b?a:b}func abs(x){return x<0?-x:x}BEGIN{s=0;}{s=max(s,abs(($4-$3)/max($4,$3)));}END{print s}')
+		awk -F'|' '$2=="e"' $i/raw.txt | tail -n 1 | cut -d '|' -f 4 | tr ' ' '\n' | awk '{l=NR-1; n='$n'; x=(int(l/n)/n-0.5)*10+1/n; y=((l%n)/n-0.5)*10+1/n; print x, y, $1}' > results/e_${n}n_${c}c
+		cat results/e_${n}n_${c}c | cut -d ' ' -f 1,2 | awk '{print $1, $2, '$t'}'| gubser | paste results/e_${n}n_${c}c - | sponge results/e_${n}n_${c}c
+		toterror=$(cat results/e_${n}n_${c}c | awk 'func max(a,b){return a>b?a:b}func abs(x){return x<0?-x:x}BEGIN{s=0;}{s=s+abs(($4-$3)/max($4,$3));}END{print s}')
+		maxerror=$(cat results/e_${n}n_${c}c | awk 'func max(a,b){return a>b?a:b}func abs(x){return x<0?-x:x}BEGIN{s=0;}{s=max(s,abs(($4-$3)/max($4,$3)));}END{print s}')
 		meanerror=$(echo -n $(( $toterror*1.0/($n*$n) )) | xargs -0 printf "%.6f")
-		echo "$n $c $maxerror $toterror $meanerror" >> expl
-		plt=$plt', "'e_${n}n_${c}c'" w l' 
+		echo "$n $c $maxerror $toterror $meanerror" >> results/expl
+		plt=$plt', "'results/e_${n}n_${c}c'" w l' 
 	fi
 done
 
-sort -n -k 1 -k 2 expl | sed '/^$/d' | awk 'BEGIN{a=0}a!=$1{a=$1;print ""}{print $0}' | sponge expl
-
-# seq -1 0.0001 1 > x
-# cat x | riemann > r
-# paste x r > xr
-# 
-# gnuplot -e 'set term png size 1200,600 font "Arial,18"; set output "expl_e.png"; set title "Riemann problem explicit"; set xlabel "x (fm)"; set xrange [-1:1]; plot "xr" w l'$plt
+sort -n -k 1 -k 2 results/expl | sed '/^$/d' | awk 'BEGIN{a=0}a!=$1{a=$1;print ""}{print $0}' | sponge results/expl
