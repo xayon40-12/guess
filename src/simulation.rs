@@ -383,7 +383,6 @@ fn extract_symbols(
     consts.insert("dxyz".to_string(), dxyz.to_string());
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
-    let default_dt_factor = 1.01;
     let default_dt_reset = 0.5;
     let default_max_iter = 20;
     let default_max_reset = 100;
@@ -398,41 +397,45 @@ fn extract_symbols(
         f64,
         CreatePDE,
     ) = match &param.integrator {
-        Integrator::Explicit { dt, er, scheme } => match scheme {
-            Explicit::Euler => (
-                1,
-                *dt,
-                *dt,
-                default_dt_factor,
-                default_dt_reset,
-                default_max_iter,
-                default_max_reset,
-                er.unwrap_or(0.0),
-                create_euler_pde,
-            ),
-            Explicit::PC => (
-                2,
-                *dt,
-                *dt,
-                default_dt_factor,
-                default_dt_reset,
-                default_max_iter,
-                default_max_reset,
-                er.unwrap_or(0.0),
-                create_projector_corrector_pde,
-            ),
-            Explicit::RK4 => (
-                4,
-                *dt,
-                *dt,
-                default_dt_factor,
-                default_dt_reset,
-                default_max_iter,
-                default_max_reset,
-                er.unwrap_or(0.0),
-                create_rk4_pde,
-            ),
-        },
+        Integrator::Explicit { dt, er, scheme } => {
+            let er = er.unwrap_or(0.0);
+            let default_dt_factor = 1.0 + er;
+            match scheme {
+                Explicit::Euler => (
+                    1,
+                    *dt,
+                    *dt,
+                    default_dt_factor,
+                    default_dt_reset,
+                    default_max_iter,
+                    default_max_reset,
+                    er,
+                    create_euler_pde,
+                ),
+                Explicit::PC => (
+                    2,
+                    *dt,
+                    *dt,
+                    default_dt_factor,
+                    default_dt_reset,
+                    default_max_iter,
+                    default_max_reset,
+                    er,
+                    create_projector_corrector_pde,
+                ),
+                Explicit::RK4 => (
+                    4,
+                    *dt,
+                    *dt,
+                    default_dt_factor,
+                    default_dt_reset,
+                    default_max_iter,
+                    default_max_reset,
+                    er,
+                    create_rk4_pde,
+                ),
+            }
+        }
         Integrator::Implicit {
             dt_0,
             dt_max,
@@ -442,19 +445,22 @@ fn extract_symbols(
             max_reset,
             er,
             scheme,
-        } => match scheme {
-            Implicit::RadauIIA2 => (
-                2,
-                dt_0.unwrap_or(*dt_max),
-                *dt_max,
-                dt_factor.unwrap_or(default_dt_factor),
-                dt_reset.unwrap_or(default_dt_reset),
-                max_iter.unwrap_or(default_max_iter),
-                max_reset.unwrap_or(default_max_reset),
-                *er,
-                create_implicit_radau_pde,
-            ),
-        },
+        } => {
+            let default_dt_factor = 1.0 + *er;
+            match scheme {
+                Implicit::RadauIIA2 => (
+                    2,
+                    dt_0.unwrap_or(*dt_max),
+                    *dt_max,
+                    dt_factor.unwrap_or(default_dt_factor),
+                    dt_reset.unwrap_or(default_dt_reset),
+                    max_iter.unwrap_or(default_max_iter),
+                    max_reset.unwrap_or(default_max_reset),
+                    *er,
+                    create_implicit_radau_pde,
+                ),
+            }
+        }
     };
 
     let default_boundary = "ghost";
@@ -503,7 +509,7 @@ fn extract_symbols(
         dirs.len(),
         global_dim,
     );
-    let nb_propagate = (1 + max_space_derivative_depth) / 2;
+    let nb_propagate = (1 + max_space_derivative_depth) / 2 + 1; // +1 so that the error is farther handled
     for f in func {
         h = h.create_function(f);
     }
@@ -526,6 +532,7 @@ fn extract_symbols(
                 })
         }
     }
+    let mut eqpde_init_copy = vec![];
     if pdes.len() > 0 {
         let integrator_name = &format!("integrator_{}", 0);
         let mut others = dvars
@@ -540,6 +547,20 @@ fn extract_symbols(
         int_other_pdes.append(&mut noises_names.clone());
         others.append(&mut noises_names.clone());
         let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
+        for pde in &pdes {
+            let name = pde.dvar.clone();
+            match pde.step {
+                STEP::BETWEENPDE(_) | STEP::EQPDE => {
+                    for j in 0..nb_stages {
+                        eqpde_init_copy.push((
+                            format!("dvar_{}", name.clone()),
+                            format!("tmp_dvar_{}_k{}", name.clone(), (j + 1)),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
         h = h.create_algorithm(creator(
             integrator_name,
             param.integrator.clone(),
@@ -942,6 +963,10 @@ fn extract_symbols(
             handler.run_arg(name, dim, &args)?;
             handler.copy(&swap_name, &name.replace("init_", "dvar_"))?;
         }
+    }
+
+    for (name, stage) in eqpde_init_copy {
+        handler.copy(&name, &stage)?;
     }
 
     let stage = (integrator, equation_kernels);

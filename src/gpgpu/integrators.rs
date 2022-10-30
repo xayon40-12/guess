@@ -253,7 +253,10 @@ fn multistages_kernels(
                 (&Kernel {
                     name: &format!("{}_{}", &name, &d.dvar),
                     args: args.clone(),
-                    src: &format!("    uint _i = {};\n    {}\n{}", id, priors, expr),
+                    src: &format!(
+                        "    uint _i = {};\n    if(__err[_i]){{\n    {}\n{}    }}",
+                        id, priors, expr
+                    ),
                     needed: vec![],
                 })
                     .into(),
@@ -431,7 +434,7 @@ fn multistages_algorithm(
                     max_iter,
                     max_reset,
                     dt_reset,
-                    nb_propagate: _,
+                    nb_propagate,
                     ref dt_name,
                     ref cdt_name,
                     args: iargs,
@@ -456,11 +459,11 @@ fn multistages_algorithm(
                     .map(|i| format!("src{}", i + 1))
                     .collect::<Vec<_>>();
 
-                // macro_rules! reset_error {
-                //     () => {
-                //         h.run_arg("reset_error", D1(d), &[BufArg(&bufs[error_id], "dst")])?;
-                //     };
-                // }
+                macro_rules! reset_error {
+                    () => {
+                        h.run_arg("reset_error", D1(d), &[BufArg(&bufs[error_id], "dst")])?;
+                    };
+                }
                 macro_rules! save {
                     () => {
                         for i in 0..vars.len() {
@@ -471,7 +474,7 @@ fn multistages_algorithm(
                                 )?;
                             }
                         }
-                        // reset_error!();
+                        reset_error!();
                     };
                 }
                 macro_rules! reset {
@@ -484,10 +487,11 @@ fn multistages_algorithm(
                                 )?;
                             }
                         }
-                        // reset_error!();
+                        reset_error!();
                     };
                 }
 
+                reset_error!();
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
@@ -614,60 +618,65 @@ fn multistages_algorithm(
                                 ));
                             }
                         }
-                        // let mprop = nb_propagate % 2;
-                        // error_args.push(BufArg(
-                        //     &bufs[if mprop == 0 {
-                        //         error_id
-                        //     } else {
-                        //         pre_constraint_id
-                        //     }],
-                        //     "err",
-                        // ));
-                        error_args.push(BufArg(&bufs[error_id], "err"));
+                        let mprop = nb_propagate % 2;
+                        error_args.push(BufArg(
+                            &bufs[if mprop == 0 {
+                                error_id
+                            } else {
+                                pre_constraint_id
+                            }],
+                            "err",
+                        ));
+                        //error_args.push(BufArg(&bufs[error_id], "err"));
                         error_args.push(Param("e", max_error.into()));
                         h.run_arg("implicit_error", D1(d), &error_args)?;
-                        // let prop = [&bufs[error_id], &bufs[pre_constraint_id]];
-                        // for i in mprop..mprop + nb_propagate {
-                        //     h.run_arg(
-                        //         "propagate_error",
-                        //         dim,
-                        //         &[BufArg(prop[1 - (i % 2)], "dst"), BufArg(prop[i % 2], "src")],
-                        //     )?;
-                        // }
+                        let prop = [&bufs[error_id], &bufs[pre_constraint_id]];
+                        for i in mprop..mprop + nb_propagate {
+                            h.run_arg(
+                                "propagate_error",
+                                dim,
+                                &[BufArg(prop[1 - (i % 2)], "dst"), BufArg(prop[i % 2], "src")],
+                            )?;
+                        }
                         let ap = ReduceParam {
                             vect_dim: 1,
                             dst_size: None,
                             window: None,
                         };
                         let dst_max = &bufs[pre_constraint_id];
-                        h.run_algorithm(
-                            "max",
-                            D1(d),
-                            &[DimDir::X],
-                            &[&bufs[tmpid], &bufs[pre_constraint_id], dst_max],
-                            AlgorithmParam::Ref(&ap),
-                        )?;
-                        let err = h.get_first(dst_max)?.F64();
-
                         // h.run_algorithm(
-                        //     "sum",
+                        //     "max",
                         //     D1(d),
                         //     &[DimDir::X],
-                        //     &[&bufs[error_id], &bufs[pre_constraint_id], dst_max],
+                        //     &[&bufs[tmpid], &bufs[pre_constraint_id], dst_max],
                         //     AlgorithmParam::Ref(&ap),
                         // )?;
-                        // let tot_error = h.get_first(dst_max)?.F64();
+                        // let err = h.get_first(dst_max)?.F64();
+
+                        h.run_algorithm(
+                            "sum",
+                            D1(d),
+                            &[DimDir::X],
+                            &[&bufs[error_id], &bufs[pre_constraint_id], dst_max],
+                            AlgorithmParam::Ref(&ap),
+                        )?;
+                        let tot_error = h.get_first(dst_max)?.F64();
                         // println!(
-                        //     "t: {}, dt: {}, iter: {}, reset: {}, tot_error: {}",
-                        //     t, dt, iter, reset, tot_error
+                        //     "t: {:.3e}, dt: {:.3e}, iter: {}, reset: {}, tot_error: {}, err: {:.3e}, max_error: {:.3e}",
+                        //     t, dt, iter, reset, tot_error, err, max_error
                         // );
+                        // println!("reset: {}", reset);
 
                         swap = 1 - swap;
-                        if err < max_error {
+                        if tot_error == 0.0 {
                             done = true;
                             break;
                         } else if iter == reset * max_iter {
-                            dt *= dt_reset;
+                            if reset == 1 {
+                                dt /= dt_factor;
+                            } else {
+                                dt *= dt_reset;
+                            }
                             reset += 1;
                             iter = 1;
                             reset!();
@@ -677,7 +686,6 @@ fn multistages_algorithm(
                     }
                     iter += 1;
                 }
-                //reset_error!();
                 if implicit {
                     if !done {
                         panic!(
