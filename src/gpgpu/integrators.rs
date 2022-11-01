@@ -81,20 +81,24 @@ impl Scheme {
 pub type CreatePDE = fn(
     &str,
     Integrator,
-    Vec<SPDE>,
+    &Vec<SPDE>,
+    &Vec<(String, usize)>,
     Option<Vec<String>>,
     Vec<(String, ConstructorTypes)>,
 ) -> SAlgorithm;
+
 pub fn create_euler_pde(
     name: &str,
     integrator: Integrator,
-    pdes: Vec<SPDE>,
+    pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
 ) -> SAlgorithm {
     multistages_algorithm(
         name,
-        &pdes,
+        pdes,
+        pure_constraints,
         needed_buffers,
         params,
         integrator,
@@ -108,13 +112,15 @@ pub fn create_euler_pde(
 pub fn create_projector_corrector_pde(
     name: &str,
     integrator: Integrator,
-    pdes: Vec<SPDE>,
+    pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
 ) -> SAlgorithm {
     multistages_algorithm(
         name,
-        &pdes,
+        pdes,
+        pure_constraints,
         needed_buffers,
         params,
         integrator,
@@ -128,13 +134,15 @@ pub fn create_projector_corrector_pde(
 pub fn create_rk4_pde(
     name: &str,
     integrator: Integrator,
-    pdes: Vec<SPDE>,
+    pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
 ) -> SAlgorithm {
     multistages_algorithm(
         name,
-        &pdes,
+        pdes,
+        pure_constraints,
         needed_buffers,
         params,
         integrator,
@@ -154,13 +162,15 @@ pub fn create_rk4_pde(
 pub fn create_implicit_radau_pde(
     name: &str,
     integrator: Integrator,
-    pdes: Vec<SPDE>,
+    pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
 ) -> SAlgorithm {
     multistages_algorithm(
         name,
-        &pdes,
+        pdes,
+        pure_constraints,
         needed_buffers,
         params,
         integrator,
@@ -326,6 +336,7 @@ fn multistages_kernels(
 fn multistages_algorithm(
     name: &str,
     pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
     needed_buffers: Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
     integrator: Integrator,
@@ -376,6 +387,9 @@ fn multistages_algorithm(
     let pre_constraint_id = nb_per_stages - 2;
     let mut len = nb_per_stages * vars.len() + 1; // +1 for the error buffer
     let error_id = len - 1;
+    let pure_constraints_id = len;
+    let nb_pure_constraints = pure_constraints.len();
+    len += nb_pure_constraints;
     let nb_pde_buffers = len;
     if let Some(ns) = &needed_buffers {
         len += ns.len();

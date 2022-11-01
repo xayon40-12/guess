@@ -386,6 +386,10 @@ fn extract_symbols(
     let default_dt_reset = 0.5;
     let default_max_iter = 20;
     let default_max_reset = 100;
+    let implicit = match &param.integrator {
+        Integrator::Explicit { .. } => false,
+        Integrator::Implicit { .. } => true,
+    };
     let (nb_stages, dt_0, dt_max, dt_factor, dt_reset, max_iter, max_reset, _er, creator): (
         usize,
         f64,
@@ -532,6 +536,11 @@ fn extract_symbols(
                 })
         }
     }
+    let pure_constraints = constraints
+        .iter()
+        .filter(|(_, pure)| *pure)
+        .map(|(c, _)| (c.name, c.expr.len()))
+        .collect::<Vec<_>>();
     let mut eqpde_init_copy = vec![];
     if pdes.len() > 0 {
         let integrator_name = &format!("integrator_{}", 0);
@@ -564,7 +573,8 @@ fn extract_symbols(
         h = h.create_algorithm(creator(
             integrator_name,
             param.integrator.clone(),
-            pdes,
+            &pdes,
+            &pure_constraints,
             Some(others),
             vec![
                 ("t".into(), CF64),
@@ -590,6 +600,7 @@ fn extract_symbols(
                 pde
             })
             .chain(["tmp_error".to_string()])
+            .chain(pure_constraints.iter().map(|(name, _)| name.clone()))
             .collect::<Vec<_>>();
         buffers.append(&mut int_other_pdes);
         integrator = Some((integrator_name.to_string(), buffers));
@@ -641,19 +652,21 @@ fn extract_symbols(
         }
     }
 
-    for constraint in constraints {
-        dvars
-            .iter()
-            .find(|(n, _)| n == &constraint.name)
-            .expect(&format!(
-                "There must be a PDE corresponding to constraint \"{}\"",
-                &constraint.name
-            ));
+    for (constraint, pure) in &constraints {
+        if !pure {
+            dvars
+                .iter()
+                .find(|(n, _)| n == &constraint.name)
+                .expect(&format!(
+                    "There must be a PDE corresponding to constraint \"{}\"",
+                    &constraint.name
+                ));
+        }
         let name = format!("constraint_{}", &constraint.name);
         h = h.create_kernel(gen_single_stage_kernel(
             &name,
             constraint_args.clone(),
-            constraint,
+            constraint.clone(),
         ));
     }
 
@@ -747,6 +760,12 @@ fn extract_symbols(
         }
     }
     h = h.add_buffer("tmp_error", Len(F64(1.0), len));
+    for (name, vect_dim) in &pure_constraints {
+        h = h.add_buffer(
+            &format!("constraint_{}", name),
+            Len(F64(0.0), len * vect_dim),
+        );
+    }
     if init_file.len() > 0 {
         eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys())
     }
@@ -791,7 +810,6 @@ fn extract_symbols(
         needed: vec![],
     });
 
-    let implicit = true; // WARNING: use parameter file
     if implicit {
         let vars = dvars
             .iter()
@@ -1121,7 +1139,7 @@ fn parse_symbols(
     Vec<SPDE>,
     Vec<EqDescriptor>,
     Vec<EqDescriptor>,
-    Vec<EqDescriptor>,
+    Vec<(EqDescriptor, bool)>, // (constraint, is it pure)
     usize,
 ) {
     symbols = symbols
@@ -1166,6 +1184,7 @@ fn parse_symbols(
             .or(search_e.captures(l))
             .or(search_eqpde.captures(l))
             .or(search_betweenpde.captures(l))
+            .or(search_constraint.captures(l))
         {
             let name = &caps[1];
             if name.starts_with("_") {
@@ -1412,18 +1431,31 @@ fn parse_symbols(
         nj = cj;
     }
     doit(j, nj, &l);
-    constraints.sort_by_key(|EqDescriptor { name, .. }| name.clone());
+    let mut sorted_constraints = constraints.clone();
+    sorted_constraints.sort_by_key(|EqDescriptor { name, .. }| name.clone());
     pdes.iter_mut().for_each(|i| {
         i.expr.iter_mut().for_each(|e| *e = replace(e, &consts));
-        if let Ok(constraint_id) =
-            constraints.binary_search_by_key(&i.dvar, |EqDescriptor { name, .. }| name.clone())
+        if let Ok(constraint_id) = sorted_constraints
+            .binary_search_by_key(&i.dvar, |EqDescriptor { name, .. }| name.clone())
         {
-            i.constraint = Some(format!("constraint_{}", constraints[constraint_id].name));
+            i.constraint = Some(format!(
+                "constraint_{}",
+                sorted_constraints[constraint_id].name
+            ));
         }
     });
-    constraints
-        .iter_mut()
-        .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
+    let pure_constraint = |n: &str| {
+        !(pdes.iter().fold(false, |acc, pde| acc || pde.dvar == n)
+            || equations.iter().fold(false, |acc, eq| acc || eq.name == n))
+    };
+    let constraints = constraints
+        .into_iter()
+        .map(|mut i| {
+            i.expr.iter_mut().for_each(|e| *e = replace(e, &consts));
+            let pure = pure_constraint(&i.name);
+            (i, pure)
+        })
+        .collect::<Vec<_>>();
     equations
         .iter_mut()
         .for_each(|i| i.expr.iter_mut().for_each(|e| *e = replace(e, &consts)));
