@@ -795,22 +795,22 @@ fn extract_symbols(
     if implicit {
         let vars = dvars
             .iter()
-            .filter_map(|(n, _)| {
+            .filter_map(|(n, i)| {
                 if n.starts_with("dvar_") {
-                    Some(n[5..].to_string())
+                    Some((n[5..].to_string(), *i))
                 } else {
                     None
                 }
             })
-            .collect::<Vec<String>>();
+            .collect::<Vec<(String, usize)>>();
 
         let mut implicit_args = vec![];
         let mut error_args_names = vec![];
-        for i in 0..vars.len() {
+        for (name, _) in &vars {
             error_args_names.push(
                 (0..nb_stages)
-                    .map(|s| format!("{}_k{}", vars[i], s))
-                    .chain((0..nb_stages).map(|s| format!("{}_fk{}", vars[i], s)))
+                    .map(|s| format!("{}_k{}", name, s))
+                    .chain((0..nb_stages).map(|s| format!("{}_fk{}", name, s)))
                     .collect::<Vec<_>>(),
             );
         }
@@ -828,18 +828,33 @@ fn extract_symbols(
         let mut implicit_src = "    double tmp = ".to_string();
         let mut implicit_src_end = "".to_string();
         for i in 0..vars.len() {
+            let name = &vars[i].0;
+            let vect_dim = vars[i].1;
             for s in 0..nb_stages {
-                let tmp = format!(
-                    "fabs({n}_fk{s}[x]-{n}_k{s}[x])*ifNaNInf(1/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 1)",
-                    //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
-                    n = vars[i],
-                    s = s
-                );
-                if i == vars.len() - 1 && s == nb_stages - 1 {
-                    implicit_src += &tmp;
-                } else {
-                    implicit_src += &format!("fmaxNaNInf({},", tmp);
-                    implicit_src_end += ")";
+                for vi in 0..vect_dim {
+                    let tmp = if vect_dim == 1 {
+                        format!(
+                            "fabs({n}_fk{s}[x]-{n}_k{s}[x])*ifNaNInf(1/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 1)",
+                            //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
+                            n = name,
+                            s = s
+                        )
+                    } else {
+                        format!(
+                            "fabs({n}_fk{s}[{vd}*x+{vi}]-{n}_k{s}[{vd}*x+{vi}])*ifNaNInf(1/fmax(fabs({n}_fk{s}[{vd}*x+{vi}]),fabs({n}_k{s}[{vd}*x+{vi}])), 1)",
+                            //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
+                            n = name,
+                            vd = vect_dim,
+                            vi = vi,
+                            s = s
+                        )
+                    };
+                    if i == vars.len() - 1 && s == nb_stages - 1 {
+                        implicit_src += &tmp;
+                    } else {
+                        implicit_src += &format!("fmaxNaNInf({},", tmp);
+                        implicit_src_end += ")";
+                    }
                 }
             }
         }
