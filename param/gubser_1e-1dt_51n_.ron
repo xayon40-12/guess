@@ -1,7 +1,7 @@
 Param(
-  actions: [(RawData(["tT00","tT01","tT02","e","ut","ux","uy"]), Interval(from: 1, to: 5.2, every: 0.01))],
-  config: (t_0: Some(1), t_max: 5, dim: D2S((101,10))),
-  integrator: Implicit(dt_0: Some(1e-5), dt_max: 1e-1, er: 5e-2, scheme: RadauIIA2),
+  actions: [(RawData(["e","ut","ux","uy"]), Interval(from: 1, to: 10.1, every: 0.1))],
+  config: (t_0: Some(1), t_max: 5, dim: D2S((51,10))),
+  integrator: Implicit(dt_0: Some(1e-5), dt_max: 1e-1, er: 10e-2, scheme: RadauIIA2),
   symbols: "
       p(e) := e/3.0
       pp(e) := 1.0/3.0
@@ -18,15 +18,16 @@ Param(
       f22(e,t,ut,ux,uy) := ((e+p(e))*uy*uy + p(e))
       f33(e,t,ut,ux,uy) := p(e)
       vars := e,t,ut,ux,uy
-      tT00' = -t*(#KT_x[eig(e,ut,ux)](f10(vars)) + #KT_y[eig(e,ut,uy)](f20(vars))) - f33(vars) 
-      tT01' = -t*(#KT_x[eig(e,ut,ux)](f11(vars)) + #KT_y[eig(e,ut,uy)](f21(vars)))
-      tT02' = -t*(#KT_x[eig(e,ut,ux)](f12(vars)) + #KT_y[eig(e,ut,uy)](f22(vars)))
+      tT00' = -t*(#KT_x[eigx](f10(vars)) + #KT_y[eigy](f20(vars))) - f33(vars) 
+      tT01' = -t*(#KT_x[eigx](f11(vars)) + #KT_y[eigy](f21(vars)))
+      tT02' = -t*(#KT_x[eigx](f12(vars)) + #KT_y[eigy](f22(vars)))
       e'| = (tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*p(e)))/t
       e'c = fmax(e,1e-10)
-      ut'| = sqrt((tT00/t+p(e))/(e+p(e)))
-      ut'c = fmax(ut,1)
-      ux'| = tT01/((e+p(e))*ut*t)
-      uy'| = tT02/((e+p(e))*ut*t)
+      ut'c = fmax(sqrt((tT00/t+p(e))/(e+p(e))), 1)
+      ux'c = tT01/((e+p(e))*ut*t)
+      uy'c = tT02/((e+p(e))*ut*t)
+      eigx'c = eig(e,ut,ux)
+      eigy'c = eig(e,ut,uy)
       e0 = 1
       q = 1
       ae(t,r) = e0*(2*q)^(8/3)*t^(-4/3)*((1+2*q^2*(t^2+r^2) + q^4*(t^2-r^2)^2))^(-4/3)
@@ -35,11 +36,12 @@ Param(
       Y := ((y-(y_size)/2)*dy)
       R := sqrt(X^2 + Y^2)
       *e = ae(t,R)
-      *ut = cosh(k(t,R))
-      *ux = ifNaNInf(X/R, 0)*sinh(k(t,R))
-      *uy = ifNaNInf(Y/R, 0)*sinh(k(t,R))
-      *tT00 = t*f00(vars)
-      *tT01 = t*f10(vars)
-      *tT02 = t*f20(vars)
+      ut0 := cosh(k(t,R))
+      ux0 := ifNaNInf(X/R, 0)*sinh(k(t,R))
+      uy0 := ifNaNInf(Y/R, 0)*sinh(k(t,R))
+      vars0 := e,t,ut0,ux0,uy0
+      *tT00 = t*f00(vars0)
+      *tT01 = t*f10(vars0)
+      *tT02 = t*f20(vars0)
       ",
 )

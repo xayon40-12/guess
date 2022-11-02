@@ -54,7 +54,9 @@ macro_rules! gen {
 }
 
 fn strip(s: &str) -> String {
-    s.replace("dvar_", "").replace("swap_", "")
+    s.replace("dvar_", "")
+        .replace("swap_", "")
+        .replace("constraint_", "")
 }
 
 // This function might be used with same first and second buffer as it compute only order 1 and 2

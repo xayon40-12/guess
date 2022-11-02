@@ -543,7 +543,7 @@ fn extract_symbols(
     let pure_constraints = constraints
         .iter()
         .filter(|(_, pure)| *pure)
-        .map(|(c, _)| (c.name.clone(), c.expr.len()))
+        .map(|(c, _)| (format!("constraint_{}", &c.name), c.expr.len()))
         .collect::<Vec<_>>();
     let mut eqpde_init_copy = vec![];
     if pdes.len() > 0 {
@@ -632,6 +632,12 @@ fn extract_symbols(
     constraint_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
     constraint_args.extend(o_vars_names.iter().map(|n| KCBuffer(n, CF64)));
     constraint_args.extend(noises_names.iter().map(|n| KCBuffer(n, CF64)));
+    let constraint_string_id = "constraint_".len();
+    constraint_args.extend(
+        pure_constraints
+            .iter()
+            .map(|(n, _)| KCBuffer(&n[constraint_string_id..], CF64)),
+    );
     constraint_args.push(KCParam("t", CF64));
     constraint_args.push(KCParam("dt", CF64));
     constraint_args.push(KCParam("cdt", CF64));
@@ -728,7 +734,7 @@ fn extract_symbols(
     dvars.iter_mut().for_each(|i| {
         max = usize::max(max, i.1);
         name_to_index.insert(i.0.clone(), index);
-        index += 2 + nb_stages;
+        index += 1; // 2 + nb_stages;
         i.0 = format!("dvar_{}", i.0);
     });
     for dvar in &dvars {
@@ -759,24 +765,13 @@ fn extract_symbols(
         }
     }
     h = h.add_buffer("tmp_error", Len(F64(1.0), len));
-    for (name, vect_dim) in &pure_constraints {
-        h = h.add_buffer(
-            &format!("constraint_{}", name),
-            Len(F64(0.0), len * vect_dim),
-        );
+    for (name, dim) in &pure_constraints {
+        h = h.add_buffer(name, Len(F64(0.0), len * dim));
+        max = usize::max(max, *dim);
     }
     if init_file.len() > 0 {
         eprintln!("Warning, there are initial conditions that are not used from initial_conditions_file: {:?}.", init_file.keys())
     }
-    let renaming = |i: (String, usize)| {
-        let mut vars = vec![i.clone()];
-        for j in 0..nb_stages {
-            vars.push((format!("tmp_{}_k{}", &i.0, (j + 1)), i.1));
-        }
-        vars.push((format!("tmp_{}_tmp", &i.0), i.1));
-        vars.into_iter()
-    };
-    let mut dvars = dvars.into_iter().flat_map(renaming).collect::<Vec<_>>();
 
     if let Some(noises) = &param.noises {
         for noise in noises {
@@ -932,7 +927,7 @@ fn extract_symbols(
         println!("{}", h.source_code());
         return Ok(None);
     };
-    let dvars = dvars
+    let mut dvars = dvars
         .into_iter()
         .map(|(n, d)| (n, d as u32))
         .collect::<Vec<_>>();
@@ -994,6 +989,12 @@ fn extract_symbols(
             handler.run_arg(name, dim, &args)?;
             handler.copy(&swap_name, &name.replace("init_", "dvar_"))?;
         }
+    }
+
+    for (name, dim) in &pure_constraints {
+        dvars.push((name.clone(), *dim as u32));
+        name_to_index.insert(name[constraint_string_id..].to_string(), index);
+        index += 1;
     }
 
     for (name, stage) in eqpde_init_copy {

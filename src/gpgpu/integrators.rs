@@ -225,6 +225,7 @@ fn accuracy_kernel(vars: &Vec<SPDE>, nb_stages: usize, bbs: Vec<f64>) -> SNeeded
 fn multistages_kernels(
     name: &str,
     pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
     needed_buffers: &Option<Vec<String>>,
     params: Vec<(String, ConstructorTypes)>,
     scheme: &Scheme,
@@ -246,6 +247,13 @@ fn multistages_kernels(
     }
     args.extend(params.iter().map(|t| KCParam(&t.0, t.1)));
     args.push(KCBuffer("__err", CF64));
+    let constraint_string_id = "constraint_".len();
+    args.extend(
+        pure_constraints
+            .iter()
+            .map(|(n, _)| KCBuffer(&n[constraint_string_id..], CF64)),
+    );
+
     let mut needed = pdes
         .iter()
         .map(|d| {
@@ -381,6 +389,7 @@ fn multistages_algorithm(
                 (j, a)
             }
         });
+    let pure_constraints = pure_constraints.clone();
     let nb_stages = scheme.aij.len(); // +1 for bij
     let nb_per_stages = 2 + 3 * nb_stages;
     let tmpid = nb_per_stages - 1;
@@ -403,7 +412,15 @@ fn multistages_algorithm(
     };
     let max_accuracy = max_error;
     let max_error = max_error / nb_stages as f64;
-    let mut needed = multistages_kernels(&name, &pdes, &needed_buffers, params, &scheme, implicit);
+    let mut needed = multistages_kernels(
+        &name,
+        &pdes,
+        &pure_constraints,
+        &needed_buffers,
+        params,
+        &scheme,
+        implicit,
+    );
     let is_accuracy = if let Some(bjs) = &scheme.bjs {
         let bbs = bjs
             .iter()
@@ -460,7 +477,13 @@ fn multistages_algorithm(
                         i += 1;
                     }
                 }
+                let constraint_string_id = "constraint_".len();
                 args.extend(iargs.iter().map(|i| Param(&i.0, i.1)));
+                args.extend(
+                    pure_constraints
+                        .iter()
+                        .map(|(n, _)| BufArg(n, &n[constraint_string_id..])),
+                );
                 args.push(Param(t_name, t.into()));
                 args.push(Param(dt_name, dt.into()));
                 args.push(Param(cdt_name, 0.into()));
@@ -537,8 +560,8 @@ fn multistages_algorithm(
 
                         for &i in $r {
                             let constraint = &vars[i].4;
-                            let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages && (!is_accuracy || implicit) { 0 } else { tmpid }];
                             if let Some(constraint_name) = constraint {
+                                let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages && (!is_accuracy || implicit) { 0 } else { tmpid }];
                                 args[0] = BufArg(dst_buf, "dst");
                                 for i in 0..vars.len() {
                                     let pos = if ($s == nb_stages && $pred.contains(&i)) || (!implicit && !is_accuracy && $s == 0 && !$pred.contains(&i)) {
@@ -551,6 +574,19 @@ fn multistages_algorithm(
                                 }
                                 h.run_arg(constraint_name, D1(d * vars[i].2), &args)?;
                             }
+                        }
+                        for (name,vect_dim) in &pure_constraints {
+                            args[0] = BufArg(name, "dst");
+                            for i in 0..vars.len() {
+                                let pos = if ($s == nb_stages && $pred.contains(&i)) || (!implicit && !is_accuracy && $s == 0 && !$pred.contains(&i)) {
+                                    0
+                                } else {
+                                    tmpid
+                                };
+                                args[i+1] = BufArg(&bufs[nb_per_stages * i + pos], &vars_names[i]);
+                                args[i+1+vars.len()] = BufArg(&bufs[nb_per_stages * i], &o_vars_names[i]);
+                            }
+                            h.run_arg(&name, D1(d * vect_dim), &args)?;
                         }
                     };
                 }
