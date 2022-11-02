@@ -527,7 +527,6 @@ fn multistages_algorithm(
                     };
                 }
 
-                reset_error!();
                 macro_rules! stage {
                     ($s:ident,$r:ident,$coef:expr,$pred:ident) => {
                         let cdt = $coef.iter().fold(0.0, |a, i| a + i) * dt;
@@ -599,15 +598,18 @@ fn multistages_algorithm(
                     .into_iter()
                     .chain([scheme.bj.clone()])
                     .collect::<Vec<_>>();
+                if implicit {
+                    reset_error!();
+                }
                 while reset <= max_reset {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
                         let mut pred = vec![];
                         let mut between = 0;
                         for r in &vars_ranges {
-                            if s == 0 || implicit {
-                                stage!(s, r, coefs[s + between], pred);
-                            }
+                            //if s == 0 || implicit {
+                            stage!(s, r, coefs[s + between], pred);
+                            //}
                             for &i in r {
                                 args[0] = BufArg(
                                     &bufs[nb_per_stages * i + dst_swap * nb_stages + (s + 1)],
@@ -627,10 +629,10 @@ fn multistages_algorithm(
                                 h.run_arg(&vars[i].0, dim, &args)?;
                             }
                             between = 1;
-                            if !implicit {
-                                let s = s + 1;
-                                stage!(s, r, coefs[s], pred);
-                            }
+                            //if !implicit {
+                            //    let s = s + 1;
+                            //    stage!(s, r, coefs[s], pred);
+                            //}
                         }
                     }
                     if implicit {
@@ -773,12 +775,12 @@ fn multistages_algorithm(
                         }
                     }
                 }
-                if implicit {
-                    let mut pred = vec![];
-                    for r in &vars_ranges {
-                        stage!(nb_stages, r, scheme.bj, pred);
-                    }
+                //if implicit {
+                let mut pred = vec![];
+                for r in &vars_ranges {
+                    stage!(nb_stages, r, scheme.bj, pred);
                 }
+                //}
 
                 intprm.dt = dt_max.min(dt * dt_factor);
                 intprm.t += intprm.dt;
