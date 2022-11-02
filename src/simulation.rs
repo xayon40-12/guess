@@ -599,7 +599,6 @@ fn extract_symbols(
                 for j in 0..nb_stages {
                     pde.push(format!("tmp_save_dvar_{}_k{}", name, (j + 1)));
                 }
-                pde.push(format!("tmp_dvar_{}_tmp2", name));
                 pde.push(format!("tmp_dvar_{}_tmp", name));
                 pde
             })
@@ -756,10 +755,6 @@ fn extract_symbols(
                     Len(F64(0.0), len * dvar.1),
                 );
             }
-            h = h.add_buffer(
-                &format!("tmp_{}_tmp2", &dvar.0),
-                Len(F64(0.0), len * dvar.1),
-            );
             h = h.add_buffer(&format!("tmp_{}_tmp", &dvar.0), Len(F64(0.0), len * dvar.1));
         }
     }

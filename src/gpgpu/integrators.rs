@@ -382,12 +382,11 @@ fn multistages_algorithm(
             }
         });
     let nb_stages = scheme.aij.len(); // +1 for bij
-    let nb_per_stages = 3 + 3 * nb_stages;
+    let nb_per_stages = 2 + 3 * nb_stages;
     let tmpid = nb_per_stages - 1;
-    let pre_constraint_id = nb_per_stages - 2;
     let mut len = nb_per_stages * vars.len() + 1; // +1 for the error buffer
     let error_id = len - 1;
-    let pure_constraints_id = len;
+    let _pure_constraints_id = len;
     let nb_pure_constraints = pure_constraints.len();
     len += nb_pure_constraints;
     let nb_pde_buffers = len;
@@ -513,8 +512,7 @@ fn multistages_algorithm(
                         args[dt_id] = Param(dt_name, dt.into()); // increment time for next stage
                         args[cdt_id] = Param(cdt_name, cdt.into()); // increment time for next stage
                         for &i in $r {
-                            let constraint = &vars[i].4;
-                            let dst_buf = &bufs[nb_per_stages * i + if constraint.is_some() { pre_constraint_id } else if $s == nb_stages && (!is_accuracy || implicit) { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
+                            let dst_buf = &bufs[nb_per_stages * i + if $s == nb_stages && (!is_accuracy || implicit) { 0 } else { tmpid }]; //TODO: if constraint write in pre_constrained_id
                             let mut stage_args = vec![
                                 BufArg(dst_buf,"dst",),
                                 BufArg(&bufs[nb_per_stages * i ], "src"),
@@ -543,7 +541,7 @@ fn multistages_algorithm(
                             if let Some(constraint_name) = constraint {
                                 args[0] = BufArg(dst_buf, "dst");
                                 for i in 0..vars.len() {
-                                    let pos = if vars[i].4.is_some() && $pred.contains(&i) { pre_constraint_id } else if ($s == nb_stages && $pred.contains(&i)) || (!implicit && !is_accuracy && $s == 0 && !$pred.contains(&i)) {
+                                    let pos = if ($s == nb_stages && $pred.contains(&i)) || (!implicit && !is_accuracy && $s == 0 && !$pred.contains(&i)) {
                                         0
                                     } else {
                                         tmpid
@@ -580,12 +578,7 @@ fn multistages_algorithm(
                                     "dst",
                                 );
                                 for i in 0..vars.len() {
-                                    let pos = if s == 0 && !pred.contains(&i)
-                                        || (!implicit
-                                            && s == nb_stages - 1
-                                            && pred.contains(&i)
-                                            && !is_accuracy)
-                                    {
+                                    let pos = if s == 0 && !pred.contains(&i) {
                                         0
                                     } else {
                                         tmpid
@@ -634,16 +627,12 @@ fn multistages_algorithm(
                         }
                         let mprop = nb_propagate % 2;
                         error_args.push(BufArg(
-                            &bufs[if mprop == 0 {
-                                error_id
-                            } else {
-                                pre_constraint_id
-                            }],
+                            if mprop == 0 { &bufs[error_id] } else { "tmp" },
                             "err",
                         ));
                         error_args.push(Param("e", max_error.into()));
                         h.run_arg("implicit_error", D1(d), &error_args)?;
-                        let prop = [&bufs[error_id], &bufs[pre_constraint_id]];
+                        let prop = [&bufs[error_id], "tmp"];
                         for i in mprop..mprop + nb_propagate {
                             h.run_arg(
                                 "propagate_error",
@@ -656,13 +645,13 @@ fn multistages_algorithm(
                             dst_size: None,
                             window: None,
                         };
-                        let dst_max = &bufs[pre_constraint_id];
+                        let dst_max = "tmp";
 
                         h.run_algorithm(
                             "sum",
                             D1(d),
                             &[DimDir::X],
-                            &[&bufs[error_id], &bufs[pre_constraint_id], dst_max],
+                            &[&bufs[error_id], "tmp", dst_max],
                             AlgorithmParam::Ref(&ap),
                         )?;
                         let tot_error = h.get_first(dst_max)?.F64();
@@ -725,12 +714,12 @@ fn multistages_algorithm(
                         dst_size: None,
                         window: None,
                     };
-                    let dst_max = &bufs[tmpid];
+                    let dst_max = "tmp";
                     h.run_algorithm(
                         "max",
                         D1(d),
                         &[DimDir::X],
-                        &[&bufs[tmpid], &bufs[pre_constraint_id], dst_max],
+                        &["tmp", "tmp2", dst_max],
                         AlgorithmParam::Ref(&ap),
                     )?;
                     let acc = h.get_first(dst_max)?.F64();
