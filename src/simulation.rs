@@ -21,7 +21,7 @@ use std::any::Any;
 use std::io::Write;
 
 use std::collections::{HashMap, HashSet};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
 use itertools::Itertools;
@@ -167,27 +167,31 @@ impl Simulation {
             Ok(())
         };
         macro_rules! done {
-            ($parent:ident) => {
+            ($t_start:ident $parent:ident) => {
+                let t_end = $t_start.elapsed().as_secs_f32();
                 let mut done = std::fs::File::create(format!("{}/config/done", $parent))?;
-                done.write_all(b"done")?;
+                done.write_all(&format!("elapsed: {}\n", t_end).as_bytes())?;
             };
         }
         match num {
             Single(n) => {
+                let t_start = Instant::now();
                 let parent = format!("{}{}", parent, n);
                 run(&parent, n as _)?;
-                done! {parent}
+                done! {t_start parent}
             }
             Multiple(n, start) => {
                 for i in start..n + start {
+                    let t_start = Instant::now();
                     let parent = format!("{}{}", parent, i);
                     run(&parent, i as _)?;
-                    done! {parent}
+                    done! {t_start parent}
                 }
             }
             NoNum => {
+                let t_start = Instant::now();
                 run(&parent, 0)?;
-                done! {parent}
+                done! {t_start parent}
             }
         }
         Ok(())
@@ -539,7 +543,7 @@ fn extract_symbols(
     let pure_constraints = constraints
         .iter()
         .filter(|(_, pure)| *pure)
-        .map(|(c, _)| (c.name, c.expr.len()))
+        .map(|(c, _)| (c.name.clone(), c.expr.len()))
         .collect::<Vec<_>>();
     let mut eqpde_init_copy = vec![];
     if pdes.len() > 0 {
