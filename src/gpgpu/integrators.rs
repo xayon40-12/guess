@@ -198,12 +198,13 @@ fn accuracy_kernel(vars: &Vec<SPDE>, nb_stages: usize, bbs: Vec<f64>) -> SNeeded
             args.push(KCBuffer(&accuracy_args_names[i][s], CF64));
         }
     }
-    let mut src = "    double tmp = ".to_string();
+    let mut src = "    dst[x] = ".to_string();
     let mut src_end = "".to_string();
     for i in 0..vars.len() {
         let mut tmp = "fabs(".to_string();
         for s in 0..nb_stages {
-            tmp += &format!("{}*{n}_k{s}[x]", bbs[s], n = vars[i].dvar, s = s);
+            let sign = if s > 0 && bbs[s] >= 0.0 { "+" } else { "" };
+            tmp += &format!("{}{}*{n}_k{s}[x]", sign, bbs[s], n = vars[i].dvar, s = s);
         }
         tmp += ")";
         if i < vars.len() - 1 {
@@ -426,7 +427,7 @@ fn multistages_algorithm(
         let bbs = bjs
             .iter()
             .zip(scheme.bj.iter())
-            .map(|(bjs, bj)| bjs - bj)
+            .map(|(bjs, bj)| bj - bjs)
             .collect();
         needed.push(accuracy_kernel(&pdes, nb_stages, bbs));
         true
@@ -730,12 +731,10 @@ fn multistages_algorithm(
                             max_reset
                         );
                     }
-
-                    save!();
                 }
                 intprm.count = count;
                 if is_accuracy {
-                    let mut accuracy_args = vec![BufArg(&bufs[tmpid], "dst")];
+                    let mut accuracy_args = vec![BufArg("tmp", "dst")];
                     let mut accuracy_args_names = vec![];
                     for i in 0..vars.len() {
                         accuracy_args_names.push(
@@ -767,7 +766,6 @@ fn multistages_algorithm(
                         AlgorithmParam::Ref(&ap),
                     )?;
                     let acc = h.get_first(dst_max)?.F64();
-                    //println!("t: {:.3e}, dt: {:.3e}, acc: {:.3e}", t, dt, acc);
                     if acc * dt > max_accuracy {
                         intprm.dt = 0.9 * max_accuracy / acc;
                         intprm.swap = swap;
@@ -781,6 +779,9 @@ fn multistages_algorithm(
                         }
                     }
                 }
+                if implicit {
+                    save!();
+                }
                 //if implicit {
                 let mut pred = vec![];
                 for r in &vars_ranges {
@@ -788,8 +789,8 @@ fn multistages_algorithm(
                 }
                 //}
 
+                intprm.t += dt;
                 intprm.dt = dt_max.min(dt * dt_factor);
-                intprm.t += intprm.dt;
                 intprm.swap = swap;
                 Ok(Some(Box::new(intprm)))
             },
