@@ -707,7 +707,7 @@ fn multistages_algorithm(
                         if tot_error == 0.0 {
                             done = true;
                             break;
-                        } else if iter == reset * max_iter {
+                        } else if iter == reset.pow(2) * max_iter {
                             if reset == 1 {
                                 dt /= dt_factor;
                             } else {

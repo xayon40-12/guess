@@ -389,7 +389,7 @@ fn extract_symbols(
 
     let default_dt_reset = 0.5;
     let default_dt_factor = 1.1;
-    let default_max_iter = 20;
+    let default_max_iter = 10;
     let default_max_reset = 100;
     let implicit = match &param.integrator {
         Integrator::Explicit { .. } => false,
@@ -843,15 +843,15 @@ fn extract_symbols(
                 for vi in 0..vect_dim {
                     let tmp = if vect_dim == 1 {
                         format!(
-                            "fabs({n}_fk{s}[x]-{n}_k{s}[x])*ifNaNInf(1/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 1)",
-                            //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
+                            //"fabs({n}_fk{s}[x]-{n}_k{s}[x])*ifNaNInf(1/fmax(fabs({n}_fk{s}[x]),fabs({n}_k{s}[x])), 1)",
+                            "fabs({n}_fk{s}[x]-{n}_k{s}[x])",
                             n = name,
                             s = s
                         )
                     } else {
                         format!(
-                            "fabs({n}_fk{s}[{vd}*x+{vi}]-{n}_k{s}[{vd}*x+{vi}])*ifNaNInf(1/fmax(fabs({n}_fk{s}[{vd}*x+{vi}]),fabs({n}_k{s}[{vd}*x+{vi}])), 1)",
-                            //"fabs({n}_fk{s}[x]-{n}_k{s}[x])",
+                            //"fabs({n}_fk{s}[{vd}*x+{vi}]-{n}_k{s}[{vd}*x+{vi}])*ifNaNInf(1/fmax(fabs({n}_fk{s}[{vd}*x+{vi}]),fabs({n}_k{s}[{vd}*x+{vi}])), 1)",
+                            "fabs({n}_fk{s}[{vd}*x+{vi}]-{n}_k{s}[{vd}*x+{vi}])",
                             n = name,
                             vd = vect_dim,
                             vi = vi,
