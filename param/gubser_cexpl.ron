@@ -23,10 +23,11 @@ Param(
       tT00' = -t*(#KT_x[eig(e,ut,ux)](f10(vars)) + #KT_y[eig(e,ut,uy)](f20(vars))) - f33(vars) 
       tT01' = -t*(#KT_x[eig(e,ut,ux)](f11(vars)) + #KT_y[eig(e,ut,uy)](f21(vars)))
       tT02' = -t*(#KT_x[eig(e,ut,ux)](f12(vars)) + #KT_y[eig(e,ut,uy)](f22(vars)))
+      e'| = e
       ttK'c = tT01*tT01 + tT02*tT02
       fe(e,t,ttK,tT00) := (tT00 - ttK/(tT00+t*p(e)))/t - e
       ce(e,t,ttK,tT00) := e<=0?1e-10:e
-      e'c = fix[e=1e-3]<fe,ce,tT00>(t,ttK,tT00)
+      e'c = fix[e=1e-4]<fe,ce,e>(t,ttK,tT00)
       ut'c = sqrt((tT00/t+p(e))/(e+p(e)))
       ux'c = tT01/((e+p(e))*ut*t)
       uy'c = tT02/((e+p(e))*ut*t)
@@ -37,11 +38,11 @@ Param(
       X := ((x-(x_size)/2)*dx)
       Y := ((y-(y_size)/2)*dy)
       R := sqrt(X^2 + Y^2)
-      e0 := ae(t,R)
       ut0 := cosh(k(t,R))
       ux0 := ifNaNInf(X/R, 0)*sinh(k(t,R))
       uy0 := ifNaNInf(Y/R, 0)*sinh(k(t,R))
-      vars0 := e0,t,ut0,ux0,uy0
+      vars0 := e,t,ut0,ux0,uy0
+      *e = ae(t,R)
       *tT00 = t*f00(vars0)
       *tT01 = t*f10(vars0)
       *tT02 = t*f20(vars0)
