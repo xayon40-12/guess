@@ -388,6 +388,7 @@ fn extract_symbols(
     consts.insert("ivdxyz".to_string(), (1.0 / dxyz).to_string());
 
     let default_dt_reset = 0.5;
+    let default_dt_factor = 1.1;
     let default_max_iter = 20;
     let default_max_reset = 100;
     let implicit = match &param.integrator {
@@ -407,7 +408,6 @@ fn extract_symbols(
     ) = match &param.integrator {
         Integrator::Explicit { dt, er, scheme } => {
             let er = er.unwrap_or(0.0);
-            let default_dt_factor = 1.0 + er;
             match scheme {
                 Explicit::Euler => (
                     1,
@@ -453,22 +453,19 @@ fn extract_symbols(
             max_reset,
             er,
             scheme,
-        } => {
-            let default_dt_factor = 1.0 + *er;
-            match scheme {
-                Implicit::RadauIIA2 => (
-                    2,
-                    dt_0.unwrap_or(*dt_max),
-                    *dt_max,
-                    dt_factor.unwrap_or(default_dt_factor),
-                    dt_reset.unwrap_or(default_dt_reset),
-                    max_iter.unwrap_or(default_max_iter),
-                    max_reset.unwrap_or(default_max_reset),
-                    *er,
-                    create_implicit_radau_pde,
-                ),
-            }
-        }
+        } => match scheme {
+            Implicit::RadauIIA2 => (
+                2,
+                dt_0.unwrap_or(*dt_max),
+                *dt_max,
+                dt_factor.unwrap_or(default_dt_factor),
+                dt_reset.unwrap_or(default_dt_reset),
+                max_iter.unwrap_or(default_max_iter),
+                max_reset.unwrap_or(default_max_reset),
+                *er,
+                create_implicit_radau_pde,
+            ),
+        },
     };
 
     let default_boundary = "ghost";
