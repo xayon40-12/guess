@@ -1,7 +1,7 @@
 Param(
-  actions: [(RawData(["T00","T01","e","ut","ux"]), Interval(from: 0, to: 5, every: 0.05))],
+  actions: [(RawData(["e","ut","ux"]), Interval(from: 0, to: 5, every: 0.05))],
   config: (t_max: 5.1, dim: D1((128,10))),
-  integrator: Implicit(dt_max: 0.08, er: 1e-2, scheme: RadauIIA2),
+  integrator: Explicit(dt: 1e-2, scheme: PC),
   symbols: "
       p(e) := e/3.0
       pp(e) := 1.0/3.0
@@ -12,8 +12,10 @@ Param(
       T11(e,ut,ux) := (e+p(e))*ux*ux + p(e)
       T00' = -#KT_x[eig(e,ut,ux)](T10(e,ut,ux))
       T01' = -#KT_x[eig(e,ut,ux)](T11(e,ut,ux))
-      e'| = T00 - T01*T01/(T00 + p(e))
-      e'c = fmax(e,1e-10)
+      e'| = e
+      fe(e,t,T00,T01) := T00 - T01*T01/(T00+p(e)) - e
+      ce(e,t,T00,T01) := e<=0?1e-10:e
+      e'c = fix[e=1e-4]<fe,ce,e>(t,T00,T01)
       ut'c = sqrt((T00+p(e))/(e+p(e)))
       ux'c = T01/(ut*(e+p(e)))
       *e := x<x_size/2?10:1
