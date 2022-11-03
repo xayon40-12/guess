@@ -149,7 +149,7 @@ impl Simulation {
             }
         }
 
-        let run = |parent: &String, id: u64| -> crate::gpgpu::Result<()> {
+        let run = |parent: &String, id: u64| -> crate::gpgpu::Result<IntegratorParam> {
             let targetstr = format!("{}/config", parent);
             let target = std::path::Path::new(&targetstr);
             std::fs::create_dir_all(&target).expect(&format!(
@@ -159,45 +159,44 @@ impl Simulation {
             let dst = format!("{}/config/param.ron", parent);
             std::fs::write(&dst, &paramstr)
                 .expect(&format!("Could not write parameter file to \"{}\"", dst));
-            if let Some(mut sim) =
+            let mut sim =
                 extract_symbols(handler.clone(), param.clone(), parent.clone(), false, id)?
-            {
-                sim.run()?;
-            }
-            Ok(())
+                    .expect("Unexpected error: no Simulation available after extracting symbols");
+            sim.run()
         };
         macro_rules! done {
-            ($t_start:ident $parent:ident) => {
+            ($t_start:ident $intprm:ident $parent:ident) => {
                 let t_end = $t_start.elapsed().as_secs_f32();
+                let count = $intprm.count;
                 let mut done = std::fs::File::create(format!("{}/config/done", $parent))?;
-                done.write_all(&format!("elapsed: {}\n", t_end).as_bytes())?;
+                done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
             };
         }
         match num {
             Single(n) => {
                 let t_start = Instant::now();
                 let parent = format!("{}{}", parent, n);
-                run(&parent, n as _)?;
-                done! {t_start parent}
+                let intprm = run(&parent, n as _)?;
+                done! {t_start intprm parent}
             }
             Multiple(n, start) => {
                 for i in start..n + start {
                     let t_start = Instant::now();
                     let parent = format!("{}{}", parent, i);
-                    run(&parent, i as _)?;
-                    done! {t_start parent}
+                    let intprm = run(&parent, i as _)?;
+                    done! {t_start intprm parent}
                 }
             }
             NoNum => {
                 let t_start = Instant::now();
-                run(&parent, 0)?;
-                done! {t_start parent}
+                let intprm = run(&parent, 0)?;
+                done! {t_start intprm parent}
             }
         }
         Ok(())
     }
 
-    pub fn run(&mut self) -> crate::gpgpu::Result<()> {
+    pub fn run(&mut self) -> crate::gpgpu::Result<IntegratorParam> {
         let Vars {
             t_0,
             t_max,
@@ -229,6 +228,7 @@ impl Simulation {
             dt_reset,
             max_iter,
             max_reset,
+            count: 0.0,
             nb_propagate,
             dt_name: "dt".to_string(),
             cdt_name: "cdt".to_string(),
@@ -303,7 +303,7 @@ impl Simulation {
             }
         }
 
-        Ok(())
+        Ok(intprm)
     }
 }
 

@@ -45,6 +45,7 @@ pub struct IntegratorParam {
     pub dt_reset: f64,
     pub max_iter: usize,
     pub max_reset: usize,
+    pub count: f64,
     pub nb_propagate: usize,
     pub dt_name: String,
     pub cdt_name: String, // current time step during a RungeKutta stages (so c_i*dt)
@@ -464,6 +465,7 @@ fn multistages_algorithm(
                     max_iter,
                     max_reset,
                     dt_reset,
+                    mut count,
                     nb_propagate,
                     ref dt_name,
                     ref cdt_name,
@@ -601,6 +603,7 @@ fn multistages_algorithm(
                 if implicit {
                     reset_error!();
                 }
+                count += 1.0;
                 while reset <= max_reset {
                     let dst_swap = if implicit { 1 - swap } else { swap };
                     for s in 0..nb_stages {
@@ -712,6 +715,8 @@ fn multistages_algorithm(
                             reset += 1;
                             iter = 1;
                             reset!();
+                        } else {
+                            count += tot_error / d as f64;
                         }
                     } else {
                         reset = max_reset + 1; // WARING: this is a trick for explicit
@@ -728,6 +733,7 @@ fn multistages_algorithm(
 
                     save!();
                 }
+                intprm.count = count;
                 if is_accuracy {
                     let mut accuracy_args = vec![BufArg(&bufs[tmpid], "dst")];
                     let mut accuracy_args_names = vec![];
