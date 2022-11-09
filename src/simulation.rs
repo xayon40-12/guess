@@ -271,25 +271,23 @@ impl Simulation {
 
             let mut update: Option<Box<dyn Any>> = None;
             let (inte, equs) = stage;
-            {
-                for equ in equs {
-                    let mut args = equ
-                        .args
-                        .iter()
-                        .map(|(b, n)| BufArg(b, n))
-                        .collect::<Vec<_>>();
-                    args.push(Param("t", intprm.t.into()));
-                    self.handler.run_arg(&equ.kernel_name, dim, &args[..])?;
-                }
-                if let Some((integrator, vars)) = inte {
-                    let vars = vars.iter().map(|i| &i[..]).collect::<Vec<_>>();
-                    update =
-                        self.handler
-                            .run_algorithm(integrator, dim, &[], &vars, Ref(&intprm))?;
-                }
-                for equ in equs {
-                    self.handler.copy(&equ.buf_tmp, &equ.buf_var)?;
-                }
+            for equ in equs {
+                let mut args = equ
+                    .args
+                    .iter()
+                    .map(|(b, n)| BufArg(b, n))
+                    .collect::<Vec<_>>();
+                args.push(Param("t", intprm.t.into()));
+                self.handler.run_arg(&equ.kernel_name, dim, &args[..])?;
+            }
+            if let Some((integrator, vars)) = inte {
+                let vars = vars.iter().map(|i| &i[..]).collect::<Vec<_>>();
+                update = self
+                    .handler
+                    .run_algorithm(integrator, dim, &[], &vars, Ref(&intprm))?;
+            }
+            for equ in equs {
+                self.handler.copy(&equ.buf_tmp, &equ.buf_var)?;
             }
             intprm = *update
                 .expect("Integrator algorithm must return the next IntegratorParam.")

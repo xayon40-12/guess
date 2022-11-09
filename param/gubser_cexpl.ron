@@ -2,7 +2,7 @@ Param(
   actions: [(RawData(["e","ut","ux","uy"]), Interval(from: 1, to: 10.1, every: 0.1))],
   config: (t_0: Some(1), t_max: 5, dim: D2S((51,10))),
   default_boundary: Some("ghost"),
-  integrator: Explicit(dt: 1e-4, scheme: PC),
+  integrator: Explicit(dt: 1e-3, scheme: PC),
   symbols: "
       p(e) := e/3.0
       pp(e) := 1.0/3.0

@@ -704,12 +704,13 @@ fn multistages_algorithm(
                         // println!("reset: {}", reset);
 
                         swap = 1 - swap;
+                        //println!("tot_error: {}", tot_error);
                         if tot_error == 0.0 {
                             done = true;
                             break;
-                        } else if iter == reset.pow(2) * max_iter {
+                        } else if iter == reset * max_iter {
                             if reset == 1 {
-                                dt /= dt_factor;
+                                dt /= dt_factor.powf(3.0);
                             } else {
                                 dt *= dt_reset;
                             }
