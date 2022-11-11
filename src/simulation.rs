@@ -369,6 +369,8 @@ fn extract_symbols(
     h = h.load_kernel("vcminus");
     h = h.load_kernel("moments_to_cumulants");
     h = h.load_function("ifNaNInf");
+    h = h.load_function("ifelse");
+    h = h.load_function("lessthan");
     h = h.load_function("fmaxNaNInf");
 
     let mut consts = HashMap::new();

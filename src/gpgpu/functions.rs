@@ -134,7 +134,22 @@ pub fn functions() -> HashMap<&'static str, Function<'static>> {
             name: "ifNaNInf",
             args: vec![FCParam("x",CF64),FCParam("val",CF64)],
             ret_type: Some(CF64),
-            src: "    if(x!=x || isinf(x)) {{ return val; }} else {{ return x; }}",
+            src: "    if(x!=x || isinf(x)) { return val; } else { return x; }",
+            needed: vec![],
+        },
+
+        Function {
+            name: "lessthan",
+            args: vec![FCParam("x",CF64),FCParam("y",CF64)],
+            ret_type: Some(CF64),
+            src: "    return x<y;",
+            needed: vec![],
+        },
+        Function {
+            name: "ifelse",
+            args: vec![FCParam("x",CF64),FCParam("val1",CF64),FCParam("val2",CF64)],
+            ret_type: Some(CF64),
+            src: "    if(x) { return val1; } else { return val2; }",
             needed: vec![],
         },
 
@@ -142,7 +157,7 @@ pub fn functions() -> HashMap<&'static str, Function<'static>> {
             name: "fmaxNaNInf",
             args: vec![FCParam("x",CF64),FCParam("y",CF64)],
             ret_type: Some(CF64),
-            src: "    if(x!=x || isinf(x)) {{ return x; }} else {{ if(y!=y || isinf(y)) {{ return y; }} else {{ return fmax(x,y); }} }}",
+            src: "    if(x!=x || isinf(x)) { return x; } else { if(y!=y || isinf(y)) { return y; } else { return fmax(x,y); } }",
             needed: vec![],
         },
 

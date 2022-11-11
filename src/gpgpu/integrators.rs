@@ -697,11 +697,13 @@ fn multistages_algorithm(
                             AlgorithmParam::Ref(&ap),
                         )?;
                         let tot_error = h.get_first(dst_max)?.F64();
-                        // println!(
-                        //     "t: {:.3e}, dt: {:.3e}, iter: {}, reset: {}, tot_error: {}, max_error: {:.3e}",
+                        //let dve = h.get("tmp_dvar_e_k1")?.VF64();
+                        //println!("{:?}", dve);
+                        //println!(
+                        //    "t: {:.3e}, dt: {:.3e}, iter: {}, reset: {}, tot_error: {}, max_error: {:.3e}",
                         //     t, dt, iter, reset, tot_error, max_error
-                        // );
-                        // println!("reset: {}", reset);
+                        //);
+                        //println!("reset: {}", reset);
 
                         swap = 1 - swap;
                         //println!("tot_error: {}", tot_error);
