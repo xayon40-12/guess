@@ -6,8 +6,8 @@ use crate::gpgpu::descriptors::{
 };
 use crate::gpgpu::functions::SFunction;
 use crate::gpgpu::integrators::{
-    create_euler_pde, create_implicit_radau_pde, create_projector_corrector_pde, create_rk4_pde,
-    CreatePDE, IntegratorParam, SPDE, STEP,
+    create_euler_pde, create_implicit_euler_pde, create_implicit_radau_pde,
+    create_projector_corrector_pde, create_rk4_pde, CreatePDE, IntegratorParam, SPDE, STEP,
 };
 use crate::gpgpu::kernels::SKernel;
 use crate::gpgpu::pde_parser::pde_ir::coords_str;
@@ -464,6 +464,18 @@ fn extract_symbols(
                 max_reset.unwrap_or(default_max_reset),
                 *er,
                 create_implicit_radau_pde,
+            ),
+
+            Implicit::Euler => (
+                1,
+                dt_0.unwrap_or(*dt_max),
+                *dt_max,
+                dt_factor.unwrap_or(default_dt_factor),
+                dt_reset.unwrap_or(default_dt_reset),
+                max_iter.unwrap_or(default_max_iter),
+                max_reset.unwrap_or(default_max_reset),
+                *er,
+                create_implicit_euler_pde,
             ),
         },
     };

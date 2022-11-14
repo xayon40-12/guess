@@ -160,6 +160,28 @@ pub fn create_rk4_pde(
     )
 }
 
+pub fn create_implicit_euler_pde(
+    name: &str,
+    integrator: Integrator,
+    pdes: &Vec<SPDE>,
+    pure_constraints: &Vec<(String, usize)>,
+    needed_buffers: Option<Vec<String>>,
+    params: Vec<(String, ConstructorTypes)>,
+) -> SAlgorithm {
+    multistages_algorithm(
+        name,
+        pdes,
+        pure_constraints,
+        needed_buffers,
+        params,
+        integrator,
+        Scheme {
+            aij: vec![vec![1.0]],
+            bj: vec![1.0],
+            bjs: None,
+        },
+    )
+}
 pub fn create_implicit_radau_pde(
     name: &str,
     integrator: Integrator,

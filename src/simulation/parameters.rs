@@ -50,6 +50,7 @@ pub enum Explicit {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Implicit {
     RadauIIA2,
+    Euler,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
