@@ -1,3 +1,4 @@
+use crate::concurrent_hdf5::ConcurrentHDF5;
 use crate::gpgpu::algorithms::{AlgorithmParam::*, RandomType};
 use crate::gpgpu::data_file::Format;
 use crate::gpgpu::descriptors::{
@@ -149,7 +150,10 @@ impl Simulation {
             }
         }
 
-        let run = |parent: &String, id: u64| -> crate::gpgpu::Result<IntegratorParam> {
+        let run = |parent: &String,
+                   hdf5_file: &mut Option<ConcurrentHDF5>,
+                   id: u64|
+         -> crate::gpgpu::Result<IntegratorParam> {
             let targetstr = format!("{}/config", parent);
             let target = std::path::Path::new(&targetstr);
             std::fs::create_dir_all(&target).expect(&format!(
@@ -162,41 +166,72 @@ impl Simulation {
             let mut sim =
                 extract_symbols(handler.clone(), param.clone(), parent.clone(), false, id)?
                     .expect("Unexpected error: no Simulation available after extracting symbols");
-            sim.run()
+            sim.run(hdf5_file)
         };
+
+        let mut hdf5_file = None;
+
+        macro_rules! update {
+            ($storage:ident, $path:expr, $attr:expr, $v:expr, $i:expr) => {
+                if let Err(e) = $storage.update_group_attr($path,$attr,|i| i,$v) {
+                    eprintln!("Error in update \"{}\" attribute in hdf5 file for simulation number {}:\n{:?}", $attr, $i, e);
+                }
+            };
+        }
         macro_rules! done {
-            ($t_start:ident $intprm:ident $parent:ident) => {
+            ($t_start:ident $intprm:ident $parent:ident $i:ident) => {
                 let t_end = $t_start.elapsed().as_secs_f32();
                 let count = $intprm.count;
-                let mut done = std::fs::File::create(format!("{}/config/done", $parent))?;
-                done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
+                if let Some(storage) = &mut hdf5_file {
+                    match storage.update_group_attr(&$parent, "done_count", |i| i + 1, &0) {
+                        Err(e) => eprintln!(
+                            "Error in update \"done_count\" attribute in hdf5 file:\n{:?}",
+                            e
+                        ),
+                        Ok(_o) => {
+                            // if updated == total_count_to_simulate { // TODO: fuse }
+                        }
+                    }
+                    let parenti = format!("{}/{}", $parent, $i);
+                    update!(storage, &parenti, "done", &false, $i);
+                    update!(storage, &parenti, "elapsed", &t_end, $i);
+                    update!(storage, &parenti, "count", &count, $i);
+                } else {
+                    let mut done =
+                        std::fs::File::create(format!("{}_{}/config/done", $parent, $i))?;
+                    done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
+                }
             };
         }
         match num {
-            Single(n) => {
+            Single(i) => {
                 let t_start = Instant::now();
-                let parent = format!("{}{}", parent, n);
-                let intprm = run(&parent, n as _)?;
-                done! {t_start intprm parent}
+                let parent_id = format!("{}_{}", parent, i);
+                let intprm = run(&parent_id, &mut hdf5_file, i as _)?;
+                done! {t_start intprm parent i}
             }
             Multiple(n, start) => {
                 for i in start..n + start {
                     let t_start = Instant::now();
-                    let parent = format!("{}{}", parent, i);
-                    let intprm = run(&parent, i as _)?;
-                    done! {t_start intprm parent}
+                    let parent_id = format!("{}_{}", parent, i);
+                    let intprm = run(&parent_id, &mut hdf5_file, i as _)?;
+                    done! {t_start intprm parent i}
                 }
             }
             NoNum => {
                 let t_start = Instant::now();
-                let intprm = run(&parent, 0)?;
-                done! {t_start intprm parent}
+                let i = 0;
+                let intprm = run(&parent, &mut hdf5_file, i)?;
+                done! {t_start intprm parent i}
             }
         }
         Ok(())
     }
 
-    pub fn run(&mut self) -> crate::gpgpu::Result<IntegratorParam> {
+    pub fn run(
+        &mut self,
+        hdf5_file: &mut Option<ConcurrentHDF5>,
+    ) -> crate::gpgpu::Result<IntegratorParam> {
         let Vars {
             t_0,
             t_max,
@@ -236,7 +271,7 @@ impl Simulation {
         };
         for (activator, callback) in &mut self.callbacks {
             if activator(intprm.t) {
-                callback(&mut self.handler, &self.vars, intprm.t)?;
+                callback(&mut self.handler, &self.vars, hdf5_file, intprm.t)?;
             }
         }
         #[cfg(debug_assertions)]
@@ -296,7 +331,7 @@ impl Simulation {
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
-                    callback(&mut self.handler, &self.vars, intprm.t)?;
+                    callback(&mut self.handler, &self.vars, hdf5_file, intprm.t)?;
                 }
             }
         }

@@ -91,6 +91,7 @@ impl Files {
 }
 
 fn search_files(name: &str) -> Files {
+    let name = &format!("{}_", name);
     let folders = folders(name);
     let mut param = None;
     let mut names = None;

@@ -1,3 +1,4 @@
+use crate::concurrent_hdf5::ConcurrentHDF5;
 use crate::gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
 use crate::gpgpu::descriptors::KernelArg::*;
 use crate::gpgpu::kernels::{radial, Origin, Radial};
@@ -24,8 +25,14 @@ pub enum Action {
 }
 pub use Action::*;
 
-pub type Callback =
-    Box<dyn FnMut(&mut crate::gpgpu::Handler, &Vars, f64) -> crate::gpgpu::Result<()>>;
+pub type Callback = Box<
+    dyn FnMut(
+        &mut crate::gpgpu::Handler,
+        &Vars,
+        &mut Option<ConcurrentHDF5>,
+        f64,
+    ) -> crate::gpgpu::Result<()>,
+>;
 
 fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
     let write = |f, c: &str| {
@@ -41,9 +48,9 @@ fn write_all<'a>(parent: &'a str, file_name: &'a str, content: &'a str) {
 }
 
 macro_rules! gen {
-    ($names:ident, $id:ident, $head:ident, $name_to_index:ident, $num_pdes:ident, $h:ident, $vars:ident, $t:ident, $body:tt) => {{
+    ($names:ident, $id:ident, $head:ident, $name_to_index:ident, $num_pdes:ident, $h:ident, $vars:ident, $hdf5_file:ident, $t:ident, $body:tt) => {{
         let idx = $names.iter().map(|n| $name_to_index[n]).collect::<Vec<_>>();
-        Box::new(move |$h, $vars, $t| {
+        Box::new(move |$h, $vars, $hdf5_file, $t| {
             for $id in idx.iter().map(|&i| i) {
                 $body
             }
@@ -126,7 +133,7 @@ impl Action {
     ) -> Callback {
         match self {
             Window(names) => {
-                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let dim: [usize; 3] = vars.dim.into();
@@ -161,7 +168,7 @@ impl Action {
                     write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                 }}
             }
-            Moments(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+            Moments(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                 let var_name = strip(&vars.dvars[id].0);
                 let w = vars.dvars[id].1;
                 let num = 4;
@@ -196,7 +203,7 @@ impl Action {
             }},
             StaticStructureFactor(names, shape) => {
                 let shape = *shape;
-                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                 let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
@@ -241,7 +248,7 @@ impl Action {
             }
             DynamicStructureFactor(names) => {
                 let mut first = true;
-                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                 let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
@@ -266,7 +273,7 @@ impl Action {
             }
             Correlation(names, shape) => {
                 let shape = *shape;
-                gen! {names,id,head,name_to_index,num_pdes,h,vars,t, {
+                gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
@@ -314,7 +321,7 @@ impl Action {
 
                 }}
             }
-            RawData(names) => gen! {names,id,_head,name_to_index,num_pdes,h,vars,t, {
+            RawData(names) => gen! {names,id,_head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                 let w = vars.dvars[id].1;
                 let var_name = strip(&vars.dvars[id].0);
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
