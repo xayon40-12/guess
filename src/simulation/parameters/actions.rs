@@ -9,6 +9,7 @@ use crate::gpgpu::descriptors::KernelArg::*;
 use crate::gpgpu::kernels::{radial, Origin, Radial};
 use crate::gpgpu::{Dim::*, DimDir::*};
 use crate::simulation::Vars;
+use ndarray::{Array, Array2};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -152,6 +153,27 @@ fn cenot(v: &[f64; 2]) -> String {
     format!("{:e}j{:e}", v[0], v[1]) // complex number <real>j<imaginary>
 }
 
+macro_rules! attr {
+    ($storage:ident, $path:expr, $attr:expr, $v:expr) => {
+        if let Err(e) = $storage.update_group_attr($path, $attr, |i| i, $v) {
+            eprintln!(
+                "Error in setting \"{}\" attribute in hdf5 file:\n{:?}",
+                $attr, e
+            );
+        }
+    };
+}
+macro_rules! hdf5write {
+    ($storage:ident, $path:expr, $data:expr) => {
+        if let Err(e) = $storage.write_data($path, $data) {
+            eprintln!(
+                "Error in writing data at \"{}\" in hdf5 file:\n{:?}",
+                $path, e
+            );
+        }
+    };
+}
+
 impl Action {
     pub fn to_callback(
         &self,
@@ -201,12 +223,40 @@ impl Action {
                             },
                         }
                     };
-                    let moms = if configurations > 1 {
-                        moments(rad,num).into_iter().map(|m| vtos(&search(&m),renot)).collect::<Vec<_>>().join("/")
+
+                    if let Some(hdf5) = hdf5_file {
+                        let parent = vars.parent_no_id;
+                        if configurations > 1 {
+                            let data = moments(rad,num).into_iter().map(|m| search(&m)).collect::<Vec<_>>();
+                            for (mom_id, data) in data.iter().enumerate() {
+                                let data_pos = data.iter().map(|r| r.pos).collect::<Vec<_>>();
+                                let s = data[0].vals.len();
+                                let l = data.len();
+                                let data_vals = Array::from_shape_vec((l,s), data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
+                                let location = &format!("{}/{}/{:e}/window/{}/mom_{}", id, parent, t, var_name, mom_id);
+                                hdf5write!(hdf5, &format!("{}/{}", location, name), &data_vals);
+                                hdf5write!(hdf5, &format!("{}/coord", location), &data_pos);
+                                attr!(hdf5, location, "noise_configurations", &configurations);
+                            }
+                        } else {
+                            let data = search(&rad[0]);
+                            let data_pos = data.iter().map(|r| r.pos).collect::<Vec<_>>();
+                            let s = data[0].vals.len();
+                            let l = data.len();
+                            let data_vals = Array::from_shape_vec((l,s), data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
+                            let location = &format!("{}/{}/{:e}/window/{}", parent, id, t, var_name);
+                            hdf5write!(hdf5, &format!("{}/{}", location, name), &data_vals);
+                            hdf5write!(hdf5, &format!("{}/coord", location), &data_pos);
+                            attr!(hdf5, location, "noise_configurations", &configurations);
+                        }
                     } else {
-                        vtos(&search(&rad[0]),renot)
-                    };
-                    write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
+                        let moms = if configurations > 1 {
+                            moments(rad,num).into_iter().map(|m| vtos(&search(&m),renot)).collect::<Vec<_>>().join("/")
+                        } else {
+                            vtos(&search(&rad[0]),renot)
+                        };
+                        write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
+                    }
                 }}
             }
             Moments(names) => gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {

@@ -172,7 +172,7 @@ impl Simulation {
             sim.run(hdf5_file)
         };
 
-        let mut hdf5_file = None;
+        let mut hdf5_file = ConcurrentHDF5::new("data.h5").ok();
 
         macro_rules! update {
             ($storage:ident, $path:expr, $attr:expr, $v:expr, $i:expr) => {
@@ -210,7 +210,7 @@ impl Simulation {
             Single(i) => {
                 let t_start = Instant::now();
                 let parent_id = format!("{}_{}", parent, i);
-                let intprm = run(&parent_id, &mut hdf5_file, i as _)?;
+                let intprm = run(&parent_id, &mut hdf5_file, i as _)?; //TODO provide parent without the id
                 done! {t_start intprm parent i}
             }
             Multiple(n, start) => {
