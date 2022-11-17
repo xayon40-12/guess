@@ -20,13 +20,19 @@ pub enum Shape {
     Radial,
 }
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum WindowOption {
+    All,
+    Exact(Vec<f64>),
+    Every(f64),
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
     Moments(Vec<String>),
     StaticStructureFactor(Vec<String>, Shape),
     DynamicStructureFactor(Vec<String>),
     Correlation(Vec<String>, Shape),
     RawData(Vec<String>),
-    Window(Vec<String>),               // buffers
+    Window(Vec<String>, WindowOption), // buffers
     Anisotropy(Vec<(String, String)>), // the strings correspond to the two values that should averaged over space and compared
 }
 pub use Action::*;
@@ -153,7 +159,8 @@ impl Action {
         _num_pdes: usize,
     ) -> Callback {
         match self {
-            Window(names) => {
+            Window(names, positions) => {
+                let positions = positions.clone();
                 gen! {names,id,head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
@@ -181,10 +188,23 @@ impl Action {
                     let num = 4; //number of moments
                     let configurations = rad.len();
                     let name = format!("radial_{}", var_name);
+                    let search = |v: &Vec<Radial>| {
+                        match &positions {
+                            WindowOption::Exact(poss) => {
+                                poss.iter().filter_map(|p| v.iter().find(|x| x.pos >= *p).and_then(|x| Some(x.clone()))).collect()
+                            },
+                            WindowOption::Every(e) => {
+                                (0..(v[v.len()-1].pos/e + 1.0) as usize).filter_map(|p| v.iter().find(|x| x.pos >= p as f64 * e).and_then(|x| Some(x.clone()))).collect()
+                            },
+                            WindowOption::All => {
+                                v.clone()
+                            },
+                        }
+                    };
                     let moms = if configurations > 1 {
-                        moments(rad,num).into_iter().map(|m| vtos(&m,renot)).collect::<Vec<_>>().join("/")
+                        moments(rad,num).into_iter().map(|m| vtos(&search(&m),renot)).collect::<Vec<_>>().join("/")
                     } else {
-                        vtos(&rad[0],renot)
+                        vtos(&search(&rad[0]),renot)
                     };
                     write_all(&vars.parent, "window.txt", &format!("{:e}|{}|{}|{}#{}\n", t, var_name, name, configurations, moms));
                 }}

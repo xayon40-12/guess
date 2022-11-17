@@ -2,7 +2,7 @@ Param(
   data_files: Some(["m2.txt"]),
   actions: [
     (Moments(["nb"]), TotalInterval(from: 0, to: 3, total: 1000)),
-    //(Window(["nb"]), TotalInterval(from: 0, to: 3, total: 100)),
+    (Window(["nb"], Every(2)), TotalInterval(from: 0, to: 3, total: 100)),
     //(Correlation(["nb"],Radial), At(3)),
   ],
   config: (t_0: Some(0), t_max: 3, dim: D2((32,10),(1000,0))),

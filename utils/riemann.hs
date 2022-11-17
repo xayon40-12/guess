@@ -1,3 +1,4 @@
+import System.Environment (getArgs)
 -- ref: arXiv:nucl-th/9809044v1 14 Sep 1998, 
 -- Dirk H. Rischke, Fluid Dynamics for Relativistic Nuclear Collisions
 
@@ -42,5 +43,15 @@ f x | x < xt e0 = e0
     | x < vc = eq
     | otherwise = emin
 
+f2 x | x < xt e0 = e0
+     | x < 1 = e0*((1-cs)/(1+cs)*(1-x)/(1+x))**((1+cs2)/(2*cs))
+     | otherwise = emin
+        
+choice [] = f
+choice ["void"] = f2
+
 main :: IO ()
-main = getContents >>= mapM_ (print . f . read) . lines
+main = do
+    args <- getArgs
+    let fun = choice args
+    getContents >>= mapM_ (print . fun . read) . lines

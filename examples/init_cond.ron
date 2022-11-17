@@ -1,5 +1,5 @@
 Param(
-  initial_conditions_file: Some("init_cond.init"),
+  init_file: Some(YAML(file: "init_cond.yaml")),
   data_files: Some(["m2.txt"]),
   actions: [
     (RawData(["u", "v"]), TotalInterval(from: 0, to: 3, total: 1000)),
@@ -11,6 +11,6 @@ Param(
      f(_a,*b) := b[a]
      u' := f(x,u)
      v' := (1;1)
-     *u := u[_i]+1
-     *v := (v[_i]+1;v[_i+1]+1)",
+     *u := u[__i]+1
+     *v := (v[__i]+1;v[__i+1]+1)",
 )

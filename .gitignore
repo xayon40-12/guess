@@ -2,5 +2,5 @@
 ._*
 target/
 **/*.rs.bk
-param/*/
+examples/*_0/
 Cargo.lock
