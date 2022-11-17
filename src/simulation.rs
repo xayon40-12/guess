@@ -195,13 +195,11 @@ impl Simulation {
                             // if updated == total_count_to_simulate { // TODO: fuse }
                         }
                     }
-                    let parenti = format!("{}/{}", $parent, $i);
-                    update!(storage, &parenti, "done", &false, $i);
-                    update!(storage, &parenti, "elapsed", &t_end, $i);
-                    update!(storage, &parenti, "count", &count, $i);
+                    update!(storage, &parent, "done", &false, $i);
+                    update!(storage, &parent, "elapsed", &t_end, $i);
+                    update!(storage, &parent, "count", &count, $i);
                 } else {
-                    let mut done =
-                        std::fs::File::create(format!("{}_{}/config/done", $parent, $i))?;
+                    let mut done = std::fs::File::create(format!("{}/config/done", $parent))?;
                     done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
                 }
             };
@@ -209,24 +207,24 @@ impl Simulation {
         match num {
             Single(i) => {
                 let t_start = Instant::now();
-                let parent_id = format!("{}_{}", parent, i);
+                let parent_id = format!("{}/{}", parent, i);
                 let intprm = run(&parent_id, &mut hdf5_file, i as _)?; //TODO provide parent without the id
-                done! {t_start intprm parent i}
+                done! {t_start intprm parent_id i}
             }
             Multiple(n, start) => {
                 for i in start..n + start {
                     let t_start = Instant::now();
-                    let parent_id = format!("{}_{}", parent, i);
+                    let parent_id = format!("{}/{}", parent, i);
                     let intprm = run(&parent_id, &mut hdf5_file, i as _)?;
-                    done! {t_start intprm parent i}
+                    done! {t_start intprm parent_id i}
                 }
             }
             NoNum => {
                 let t_start = Instant::now();
                 let i = 0;
-                let parent_id = format!("{}_{}", parent, i);
+                let parent_id = format!("{}/{}", parent, i);
                 let intprm = run(&parent_id, &mut hdf5_file, i)?;
-                done! {t_start intprm parent i}
+                done! {t_start intprm parent_id i}
             }
         }
         Ok(())
@@ -351,18 +349,12 @@ fn extract_symbols(
     check: bool,
     sim_id: u64,
 ) -> crate::gpgpu::Result<Option<Simulation>> {
-    let upparent = if parent.rfind('/').is_some() {
-        format!(
-            "{}/",
-            if let Some(i) = parent.rfind('/') {
-                &parent[..i]
-            } else {
-                &parent
-            }
-        )
-    } else {
-        "".to_string()
-    };
+    let parent_no_id = &parent[..parent.rfind('/').expect("This is a bug: There must be a '/' in the current folder name that separate the simulation name from its id.")];
+    let upparent = parent_no_id
+        .rfind('/')
+        .and_then(|i| Some(&parent[..i + 1]))
+        .unwrap_or("")
+        .to_string();
 
     let (dims, phy) = param.config.dim.into();
     let dim: Dim = dims.into();

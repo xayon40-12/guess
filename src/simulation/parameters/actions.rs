@@ -9,7 +9,7 @@ use crate::gpgpu::descriptors::KernelArg::*;
 use crate::gpgpu::kernels::{radial, Origin, Radial};
 use crate::gpgpu::{Dim::*, DimDir::*};
 use crate::simulation::Vars;
-use ndarray::{Array, Array2};
+use ndarray::Array;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -225,7 +225,6 @@ impl Action {
                     };
 
                     if let Some(hdf5) = hdf5_file {
-                        let parent = vars.parent_no_id;
                         if configurations > 1 {
                             let data = moments(rad,num).into_iter().map(|m| search(&m)).collect::<Vec<_>>();
                             for (mom_id, data) in data.iter().enumerate() {
@@ -233,7 +232,7 @@ impl Action {
                                 let s = data[0].vals.len();
                                 let l = data.len();
                                 let data_vals = Array::from_shape_vec((l,s), data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
-                                let location = &format!("{}/{}/{:e}/window/{}/mom_{}", id, parent, t, var_name, mom_id);
+                                let location = &format!("{}/{:e}/window/{}/mom_{}", vars.parent, t, var_name, mom_id);
                                 hdf5write!(hdf5, &format!("{}/{}", location, name), &data_vals);
                                 hdf5write!(hdf5, &format!("{}/coord", location), &data_pos);
                                 attr!(hdf5, location, "noise_configurations", &configurations);
@@ -244,7 +243,7 @@ impl Action {
                             let s = data[0].vals.len();
                             let l = data.len();
                             let data_vals = Array::from_shape_vec((l,s), data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
-                            let location = &format!("{}/{}/{:e}/window/{}", parent, id, t, var_name);
+                            let location = &format!("{}/{:e}/window/{}", vars.parent, t, var_name);
                             hdf5write!(hdf5, &format!("{}/{}", location, name), &data_vals);
                             hdf5write!(hdf5, &format!("{}/coord", location), &data_pos);
                             attr!(hdf5, location, "noise_configurations", &configurations);
@@ -452,8 +451,6 @@ impl Action {
                         panic!("Both fields in Anisotropy observable must have the same properties");
                     }
 
-                    let dim: [usize; 3] = vars.dim.into();
-                    let d = dim.iter().fold(1, |a, i| a * i);
                     let ap = ReduceParam {
                         vect_dim: w,
                         dst_size: None,
