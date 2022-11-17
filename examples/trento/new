@@ -1,0 +1,15 @@
+#!/bin/sh
+
+name=trento_${1}er_${2}n_${3}fm.ron
+ID=0
+if [ -n "$4" ]; then ID="$4"; fi
+if [ -d result ]; then rm -r result; fi
+mkdir -p result
+cd result || quit
+cp ../trento.ron $name
+# awk '/^[^#]/' ../event/$ID.dat | tr '\n' ' ' | tr ' ' ',' | xargs printf "e: [%s]\n" > trento.init
+# gnuplot -p -e 'plot "../event/'$4'.dat" matrix with image'
+sed -i -e 's/@ER/'${1}'/g' -e 's/@N/'${2}'/g' -e 's/@L/'${3}'/g' -e 's/@ID/'$ID'/g' $name
+guess run $name
+../plt
+feh e.png

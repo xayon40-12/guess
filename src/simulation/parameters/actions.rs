@@ -7,10 +7,7 @@ use crate::gpgpu::algorithms::{
 };
 use crate::gpgpu::descriptors::KernelArg::*;
 use crate::gpgpu::kernels::{radial, Origin, Radial};
-use crate::gpgpu::{
-    Dim::*,
-    DimDir::{self, *},
-};
+use crate::gpgpu::{Dim::*, DimDir::*};
 use crate::simulation::Vars;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};

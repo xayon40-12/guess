@@ -1,0 +1,5 @@
+#!/bin/sh
+
+if [ -f init.h5 ]; then rm init.h5; fi
+trento -q Pb Pb -o init.h5
+./new 0.001 100 20

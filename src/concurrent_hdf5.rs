@@ -16,7 +16,8 @@ use ConcurrentHDF5Error::*;
 impl ConcurrentHDF5 {
     pub fn new(name: &str) -> Result<ConcurrentHDF5, ConcurrentHDF5Error> {
         let file = hdf5::File::append(name).map_err(HDF5Error)?;
-        let lock = fslock::LockFile::open(&format!("{}.lock", name)).map_err(FslockError)?; // TODO: use full path to file as a nome where the '/' were replaced by '#' and store the lock file in /tmp
+        let name = name.to_string().replace("/", "#");
+        let lock = fslock::LockFile::open(&format!("/tmp/{}.lock", name)).map_err(FslockError)?; // TODO: use full path to file as a nome where the '/' were replaced by '#' and store the lock file in /tmp
         Ok(ConcurrentHDF5 { file, lock })
     }
     pub fn read_data<T: H5Type>(&mut self, path: &str) -> Result<Vec<T>, ConcurrentHDF5Error> {
