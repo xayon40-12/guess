@@ -224,29 +224,35 @@ impl Action {
                         }
                     };
 
+                    macro_rules! save_radial {
+                        ($hdf5:ident, $data:ident, $iner_location:expr) => {
+                            let location = &format!("{}/{:e}/window/{}{}", vars.parent, t, var_name, $iner_location);
+                            let data_pos = $data.iter().map(|r| r.pos).collect::<Vec<_>>();
+                            let s = $data[0].vals.len();
+                            let l = $data.len();
+                            if s == 1 {
+                                let data_vals = $data.iter().map(|r| r.vals[0]).collect::<Vec<_>>();
+                                hdf5write!($hdf5, &format!("{}/{}", location, name), &data_vals);
+                            } else {
+                                let data_vals = Array::from_shape_vec((l,s), $data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
+                                hdf5write!($hdf5, &format!("{}/{}", location, name), &data_vals);
+                            }
+                            hdf5write!($hdf5, &format!("{}/coord", location), &data_pos);
+                            attr!($hdf5, location, "noise_configurations", &configurations);
+                        };
+                        ($hdf5:ident, $data:ident) => {
+                            save_radial!($hdf5, $data, "");
+                        };
+                    }
                     if let Some(hdf5) = hdf5_file {
                         if configurations > 1 {
                             let data = moments(rad,num).into_iter().map(|m| search(&m)).collect::<Vec<_>>();
                             for (mom_id, data) in data.iter().enumerate() {
-                                let data_pos = data.iter().map(|r| r.pos).collect::<Vec<_>>();
-                                let s = data[0].vals.len();
-                                let l = data.len();
-                                let data_vals = Array::from_shape_vec((l,s), data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
-                                let location = &format!("{}/{:e}/window/{}/mom_{}", vars.parent, t, var_name, mom_id);
-                                hdf5write!(hdf5, &format!("{}/{}", location, name), &data_vals);
-                                hdf5write!(hdf5, &format!("{}/coord", location), &data_pos);
-                                attr!(hdf5, location, "noise_configurations", &configurations);
+                                save_radial!(hdf5, data, format!("/moment/{}", mom_id+1));
                             }
                         } else {
                             let data = search(&rad[0]);
-                            let data_pos = data.iter().map(|r| r.pos).collect::<Vec<_>>();
-                            let s = data[0].vals.len();
-                            let l = data.len();
-                            let data_vals = Array::from_shape_vec((l,s), data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
-                            let location = &format!("{}/{:e}/window/{}", vars.parent, t, var_name);
-                            hdf5write!(hdf5, &format!("{}/{}", location, name), &data_vals);
-                            hdf5write!(hdf5, &format!("{}/coord", location), &data_pos);
-                            attr!(hdf5, location, "noise_configurations", &configurations);
+                            save_radial!(hdf5, data);
                         }
                     } else {
                         let moms = if configurations > 1 {
