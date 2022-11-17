@@ -22,6 +22,7 @@ use std::any::Any;
 use std::io::Write;
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub mod parameters;
@@ -40,6 +41,8 @@ pub enum NumType {
     NoNum,
 }
 use NumType::*;
+
+use self::parameters::InitFormat;
 
 #[derive(Debug)]
 pub struct EquationKernel {
@@ -221,7 +224,8 @@ impl Simulation {
             NoNum => {
                 let t_start = Instant::now();
                 let i = 0;
-                let intprm = run(&parent, &mut hdf5_file, i)?;
+                let parent_id = format!("{}_{}", parent, i);
+                let intprm = run(&parent_id, &mut hdf5_file, i)?;
                 done! {t_start intprm parent i}
             }
         }
@@ -758,17 +762,34 @@ fn extract_symbols(
         });
     }
 
-    let mut init_file: HashMap<String, Vec<f64>> = if let Some(file) = param.initial_conditions_file
-    {
-        serde_yaml::from_str(
+    let mut init_file: HashMap<String, Vec<f64>> = match param.init_file {
+        Some(InitFormat::HDF5 { file, paths_names }) => {
+            if !Path::new(&file).exists() {
+                panic!("Init hdf5 file note found: \"{}\".", file);
+            }
+            let mut hdf5 = ConcurrentHDF5::new(&file)
+                .expect(&format!("Could not read hdf5 file \"{}\".", file));
+            paths_names
+                .into_iter()
+                .map(|(p, n)| {
+                    (
+                        n.clone(),
+                        hdf5.read_data(&p).expect(&format!(
+                            "Could not read data \"{}\" at path \"{}\" in init file \"{}\".",
+                            n, p, file
+                        )),
+                    )
+                })
+                .collect()
+        }
+        Some(InitFormat::YAML { file }) => serde_yaml::from_str(
             &std::fs::read_to_string(&format!("{}{}", upparent, file)).expect(&format!(
                 "Could not find initial conditions file \"{}\".",
                 &file
             )),
         )
-        .unwrap()
-    } else {
-        HashMap::new()
+        .expect("Could not parse Yaml format input file"),
+        None => HashMap::new(),
     };
 
     let mut max = 0;

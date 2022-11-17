@@ -1,8 +1,16 @@
 use crate::concurrent_hdf5::ConcurrentHDF5;
-use crate::gpgpu::algorithms::{moments_to_cumulants, AlgorithmParam::*, MomentsParam};
+use crate::gpgpu::algorithms::ReduceParam;
+use crate::gpgpu::algorithms::{
+    moments_to_cumulants,
+    AlgorithmParam::{self, *},
+    MomentsParam,
+};
 use crate::gpgpu::descriptors::KernelArg::*;
 use crate::gpgpu::kernels::{radial, Origin, Radial};
-use crate::gpgpu::{Dim::*, DimDir::*};
+use crate::gpgpu::{
+    Dim::*,
+    DimDir::{self, *},
+};
 use crate::simulation::Vars;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -21,7 +29,8 @@ pub enum Action {
     DynamicStructureFactor(Vec<String>),
     Correlation(Vec<String>, Shape),
     RawData(Vec<String>),
-    Window(Vec<String>), // buffers
+    Window(Vec<String>),               // buffers
+    Anisotropy(Vec<(String, String)>), // the strings correspond to the two values that should averaged over space and compared
 }
 pub use Action::*;
 
@@ -52,6 +61,21 @@ macro_rules! gen {
         let idx = $names.iter().map(|n| $name_to_index[n]).collect::<Vec<_>>();
         Box::new(move |$h, $vars, $hdf5_file, $t| {
             for $id in idx.iter().map(|&i| i) {
+                $body
+            }
+
+            Ok(())
+        })
+    }};
+}
+macro_rules! gen_pair {
+    ($names:ident, $id:pat, $head:ident, $name_to_index:ident, $num_pdes:ident, $h:ident, $vars:ident, $hdf5_file:ident, $t:ident, $body:tt) => {{
+        let idx_pair = $names
+            .iter()
+            .map(|(n1, n2)| ($name_to_index[n1], $name_to_index[n2]))
+            .collect::<Vec<_>>();
+        Box::new(move |$h, $vars, $hdf5_file, $t| {
+            for $id in idx_pair.iter().map(|&i| i) {
                 $body
             }
 
@@ -180,7 +204,7 @@ impl Action {
                     let mut dim: [usize;3] = vars.dim.into();
                     vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
                     let len = dim[0]*dim[1]*dim[2];
-                    let prm = MomentsParam{ num: 2, vect_dim: w, packed: false };
+                    let prm = MomentsParam{ num: num as _, vect_dim: w, packed: false };
                     //h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
                     h.run_algorithm("moments", D2(num,len), &[Y], &["moments","cumulants","summoments","sumdst"], Ref(&prm))?;// WARNING use "cumulants" as tmp buffer
                     //h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
@@ -207,7 +231,7 @@ impl Action {
                 let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
-                    let num = 2;
+                    let num = 4;
                     h.run_arg("complex_from_real", D1(len*w as usize), &[BufArg(&vars.dvars[id].0,"src"),BufArg("srcFFT","dst")])?;
                     h.run_algorithm("FFT", vars.dim, &vars.dirs, &["srcFFT","tmpFFT","dstFFT"], Ref(&w))?;
                     h.run_arg("kc_sqrmod", D1(len*w as usize), &[BufArg("dstFFT","src"),BufArg("tmp","dst")])?;
@@ -277,7 +301,7 @@ impl Action {
                     let var_name = strip(&vars.dvars[id].0);
                     let w = vars.dvars[id].1;
                     let len = vars.len;
-                    let num = 2;
+                    let num = 4;
                     //let prm = MomentsParam{ num: 1, vect_dim: w, packed: true };
                     let dim: [usize; 3] = vars.dim.into();
                     let mut dim: Vec<u32> = dim.iter().map(|&x| x as u32).collect();
@@ -325,7 +349,7 @@ impl Action {
                 let w = vars.dvars[id].1;
                 let var_name = strip(&vars.dvars[id].0);
                 if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                    let num = 2;
+                    let num = 4;
                     let dir = [X,Y,Z].iter().take(vars.dim.len()).filter(|i| !vars.dirs.contains(i)).map(|i| *i).collect::<Vec<crate::gpgpu::DimDir>>();
                     let mut dim: [usize;3] = vars.dim.into();
                     dir.iter().for_each(|d| dim[*d as usize] = 1);
@@ -349,6 +373,73 @@ impl Action {
                     ));
                 }
             }},
+            Anisotropy(pairs) => {
+                gen_pair! {pairs,(id1,id2),head,name_to_index,num_pdes,h,vars,hdf5_file,t, {
+                    let var_name1 = strip(&vars.dvars[id1].0);
+                    let var_name2 = strip(&vars.dvars[id2].0);
+                    let w = vars.dvars[id1].1;
+                    if w != 1 {
+                        panic!("Fields considered by Anysotropy observable must be scalar.");
+                    }
+                    if w != vars.dvars[id2].1 {
+                        panic!("Both fields in Anisotropy observable must have the same properties");
+                    }
+
+                    let dim: [usize; 3] = vars.dim.into();
+                    let d = dim.iter().fold(1, |a, i| a * i);
+                    let ap = ReduceParam {
+                        vect_dim: w,
+                        dst_size: None,
+                        window: None,
+                    };
+
+                    h.run_algorithm(
+                        "sum",
+                        vars.dim,
+                        &vars.dirs,
+                        &[&vars.dvars[id1].0, "sum", "tmp"],
+                        AlgorithmParam::Ref(&ap),
+                    )?;
+                    h.run_algorithm(
+                        "sum",
+                        vars.dim,
+                        &vars.dirs,
+                        &[&vars.dvars[id2].0, "sum", "tmp2"],
+                        AlgorithmParam::Ref(&ap),
+                    )?;
+
+
+                    if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
+                        let mut dim: [usize;3] = vars.dim.into();
+                        vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                        let len = dim[0]*dim[1]*dim[2];
+                        let num = 4;
+                        let configurations = dim.iter().fold(1.0, |acc, &i| acc*i as f64);
+                        let prm = MomentsParam{ num: num as _, vect_dim: w, packed: false };
+                        //h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
+                        h.run_algorithm("moments", D2(1,len), &[Y], &["moments","cumulants","summoments","sumdst"], Ref(&prm))?;// WARNING use "cumulants" as tmp buffer
+                        //h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
+                        let res = h.get_firsts("sumdst",num*w as usize)?.VF64();
+                        //let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
+                        //let moms = res.chunks(num*w as usize) // use moments
+                        //    .map(|c| vvtos(c,w as usize,venot))
+                        //    .collect::<Vec<String>>();
+                        let moms = vvtos(&res, w as usize, venot);
+                        write_all(&vars.parent, "anisotropy.txt", &format!("{:e}|{}|anisotropy|{}#{}\n", t, format!("{}-{}", var_name1, var_name2), configurations, moms));
+                        //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
+                        //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
+
+                    } else {
+                        // WARNING: considers that w is 1
+                        let sum1 = h.get_first("tmp")?.F64();
+                        let sum2 = h.get_first("tmp2")?.F64();
+                        let anisotropy = if sum1-sum2 == 0.0 { 0.0 } else { (sum1-sum2)/(sum1+sum2) };
+                        //let cumulants = moments_to_cumulants(&moments, w as _);
+                        write_all(&vars.parent, "anisotropy.txt", &format!("{:e}|{}|anisotropy|{}\n", t, format!("{}-{}", var_name1, var_name2), anisotropy));
+                        //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vvtos(&cumulants,w as usize,venot)));
+                    }
+                }}
+            }
         }
     }
 }

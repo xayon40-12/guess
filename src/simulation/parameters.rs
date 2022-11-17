@@ -133,6 +133,17 @@ pub struct Field {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum InitFormat {
+    YAML {
+        file: String,
+    },
+    HDF5 {
+        file: String,
+        paths_names: Vec<(String, String)>,
+    }, // paths_names is a list of (path to the data in hdf5, name of the data field in the simulation)
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Param {
     pub data_files: Option<Vec<String>>,
     pub actions: Vec<(Action, Repetition)>,
@@ -142,5 +153,6 @@ pub struct Param {
     pub config: Config,
     pub integrator: Integrator,
     pub default_boundary: Option<String>,
-    pub initial_conditions_file: Option<String>,
+    pub init_file: Option<InitFormat>,
+    pub output: Option<String>,
 }
