@@ -774,10 +774,12 @@ fn extract_symbols(
                 .map(|(p, n)| {
                     (
                         n.clone(),
-                        hdf5.read_data(&p).expect(&format!(
-                            "Could not read data \"{}\" at path \"{}\" in init file \"{}\".",
-                            n, p, file
-                        )),
+                        hdf5.read_data(&p)
+                            .expect(&format!(
+                                "Could not read data \"{}\" at path \"{}\" in init file \"{}\".",
+                                n, p, file
+                            ))
+                            .data,
                     )
                 })
                 .collect()

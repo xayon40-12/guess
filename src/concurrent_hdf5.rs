@@ -9,9 +9,14 @@ pub enum ConcurrentHDF5Error {
     FslockError(fslock::Error),
 }
 
-use hdf5::H5Type;
+use hdf5::{H5Type, Ix};
 use ndarray::{ArrayView, Dimension};
 use ConcurrentHDF5Error::*;
+
+pub struct HDF5Data<T> {
+    pub data: Vec<T>,
+    pub shape: Vec<Ix>,
+}
 
 impl ConcurrentHDF5 {
     pub fn new(name: &str) -> Result<ConcurrentHDF5, ConcurrentHDF5Error> {
@@ -20,12 +25,19 @@ impl ConcurrentHDF5 {
         let lock = fslock::LockFile::open(&format!("/tmp/{}.lock", name)).map_err(FslockError)?; // TODO: use full path to file as a nome where the '/' were replaced by '#' and store the lock file in /tmp
         Ok(ConcurrentHDF5 { file, lock })
     }
-    pub fn read_data<T: H5Type>(&mut self, path: &str) -> Result<Vec<T>, ConcurrentHDF5Error> {
+    pub fn read_data<T: H5Type>(&mut self, path: &str) -> Result<HDF5Data<T>, ConcurrentHDF5Error> {
         self.lock.lock().map_err(FslockError)?;
         let data = self
             .file
             .dataset(path)
-            .and_then(|d| d.read_raw())
+            .and_then(|d| {
+                d.read_raw().and_then(|data| {
+                    Ok(HDF5Data {
+                        data,
+                        shape: d.shape(),
+                    })
+                })
+            })
             .map_err(HDF5Error);
         self.lock.unlock().map_err(FslockError)?;
         data
