@@ -154,8 +154,9 @@ fn cenot(v: &[f64; 2]) -> String {
 }
 
 macro_rules! attr {
-    ($storage:ident, $path:expr, $attr:expr, $v:expr) => {
-        if let Err(e) = $storage.update_group_attr($path, $attr, |i| i, $v) {
+    ($storage:ident, $parent:expr, $t:expr, $observable:expr, $attr:expr, $v:expr) => {
+        let location = &format!("{}/t/{:e}/{}", $parent, $t, $observable);
+        if let Err(e) = $storage.update_group_attr(location, $attr, |i| i, $v) {
             eprintln!(
                 "Error in setting \"{}\" attribute in hdf5 file:\n{:?}",
                 $attr, e
@@ -164,11 +165,32 @@ macro_rules! attr {
     };
 }
 macro_rules! hdf5write {
-    ($storage:ident, $path:expr, $name:expr, $data:expr) => {
-        if let Err(e) = $storage.write_data($path, $name, $data) {
+    ($storage:ident, $parent:expr, $t:expr, $observable:expr, $name:expr, m $data:expr) => {
+        hdf5write!($storage, $parent, $t, $observable, $name, m $data, shapex 1);
+    };
+    ($storage:ident, $parent:expr, $t:expr, $observable:expr, $name:expr, $data:expr) => {
+        hdf5write!($storage, $parent, $t, $observable, $name, $data, shapex 1);
+    };
+    ($storage:ident, $parent:expr, $t:expr, $observable:expr, $name:expr, m $data:expr, shapex $x:expr) => {
+        for (mom_id, data) in $data.iter().enumerate() {
+            hdf5write!($storage, $parent, $t, &format!("{}/moment/{}", $observable, mom_id+1), $name, data, shapex $x);
+        }
+    };
+    ($storage:ident, $parent:expr, $t:expr, $observable:expr, $name:expr, $data:expr, shapex $x:expr) => {
+        let location = &format!("{}/t/{:e}/{}", $parent, $t, $observable);
+        let x = ($x) as usize;
+        let err = if x == 1 {
+            $storage.write_data(location, $name, $data)
+        } else {
+            let y = $data.len()/x;
+            let data_vals = Array::from_shape_vec((y, x), $data.clone())
+                .expect("Wrong array shape in Window hdf5 storing");
+            $storage.write_data(location, $name, &data_vals)
+        };
+        if let Err(e) = err {
             eprintln!(
                 "Error in writing data at \"{}\" in hdf5 file:\n{:?}",
-                $path, e
+                location, e
             );
         }
     };
@@ -225,31 +247,24 @@ impl Action {
                     };
 
                     macro_rules! save_radial {
-                        ($hdf5:ident, $data:ident, $iner_location:expr) => {
-                            let location = &format!("{}/t/{:e}/window/{}{}", vars.parent, t, var_name, $iner_location);
-                            let data_pos = $data.iter().map(|r| r.pos).collect::<Vec<_>>();
-                            let s = $data[0].vals.len();
-                            let l = $data.len();
-                            if s == 1 {
-                                let data_vals = $data.iter().map(|r| r.vals[0]).collect::<Vec<_>>();
-                                hdf5write!($hdf5, &location, &name, &data_vals);
-                            } else {
-                                let data_vals = Array::from_shape_vec((l,s), $data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
-                                hdf5write!($hdf5, &location, &name, &data_vals);
-                            }
-                            hdf5write!($hdf5, location, "coord", &data_pos);
-                            attr!($hdf5, location, "noise_configurations", &configurations);
-                        };
                         ($hdf5:ident, $data:ident) => {
-                            save_radial!($hdf5, $data, "");
+                            let data_pos = $data.iter().map(|r| r.pos).collect::<Vec<_>>();
+                            let data_vals = $data.iter().flat_map(|r| r.vals.clone()).collect::<Vec<_>>();
+                            hdf5write!($hdf5, vars.parent, t, "window", &name, &data_vals, shapex w);
+                            hdf5write!($hdf5, vars.parent, t, "window", "coord", &data_pos);
+                        };
+                        ($hdf5:ident, m $data:ident) => {
+                            let data_pos = $data[0].iter().map(|r| r.pos).collect::<Vec<_>>();
+                            let data_vals = $data.iter().map(|r| r.iter().flat_map(|r| r.vals.clone()).collect::<Vec<_>>()).collect::<Vec<_>>();
+                            hdf5write!($hdf5, vars.parent, t, "window", &name, m &data_vals, shapex w);
+                            hdf5write!($hdf5, vars.parent, t, "window", "coord", &data_pos);
                         };
                     }
                     if let Some(hdf5) = hdf5_file {
                         if configurations > 1 {
                             let data = moments(rad,num).into_iter().map(|m| search(&m)).collect::<Vec<_>>();
-                            for (mom_id, data) in data.iter().enumerate() {
-                                save_radial!(hdf5, data, format!("/moment/{}", mom_id+1));
-                            }
+                            save_radial!(hdf5, m data);
+                            attr!(hdf5, vars.parent, t, "window", "noise_configurations", &configurations);
                         } else {
                             let data = search(&rad[0]);
                             save_radial!(hdf5, data);
@@ -280,20 +295,31 @@ impl Action {
                     //h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
                     h.run_algorithm("moments", D2(num,len), &[Y], &["moments","cumulants","summoments","sumdst"], Ref(&prm))?;// WARNING use "cumulants" as tmp buffer
                     //h.run_arg("to_var",D1(num*w as usize),&[BufArg("sumdst","src")])?;
-                    let res = h.get_firsts("sumdst",num*2*w as usize)?.VF64();
+                    let res = h.get_firsts("sumdst",num*num*w as usize)?.VF64();
                     //let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
                     //let moms = res.chunks(num*w as usize) // use moments
                     //    .map(|c| vvtos(c,w as usize,venot))
                     //    .collect::<Vec<String>>();
-                    let moms = vvtos(&res, w as usize, venot);
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}#{}\n", t, var_name, configurations, moms));
+
+                    if let Some(hdf5) = hdf5_file {
+                        let res = res.chunks(num*w as usize).map(|c| c.iter().map(|v| *v).collect::<Vec<_>>()).collect::<Vec<_>>();
+                        hdf5write!(hdf5, vars.parent, t, "moments", &var_name, m &res, shapex w);
+                        attr!(hdf5, vars.parent, t, "moments", "noise_configurations", &configurations);
+                    } else {
+                        let moms = vvtos(&res, w as usize, venot);
+                        write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}#{}\n", t, var_name, configurations, moms));
+                    }
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
 
                 } else {
                     let moments = h.get_firsts("moments",num*w as usize)?.VF64();
                     //let cumulants = moments_to_cumulants(&moments, w as _);
-                    write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}#{}\n", t, var_name, configurations, vvtos(&moments,w as usize,venot)));
+                    if let Some(hdf5) = hdf5_file {
+                        hdf5write!(hdf5, vars.parent, t, "moments", &var_name, &moments, shapex w);
+                    } else {
+                        write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|moments|{}#{}\n", t, var_name, configurations, vvtos(&moments,w as usize,venot)));
+                    }
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vvtos(&cumulants,w as usize,venot)));
                 }
             }},
@@ -431,18 +457,29 @@ impl Action {
                     let res = h.get_firsts("sum",num as usize*len*w as usize)?.VF64();
                     //let cumulants = moments_to_cumulants(&res,len*w as usize);//.chunks((num*w) as _).fold(vec![vec![];num as _], |mut acc,i| {i.chunks(w as _).enumerate().for_each(|(i,v)| acc[i].extend_from_slice(v)); acc});
                     //let moms = cumulants.chunks(len*w as usize)
-                    let moms = res.chunks(len*w as usize) // keep moments
-                        .map(|c| vvtos(c,w as usize,venot))
-                        .collect::<Vec<String>>();
-                    let configurations = moms.len();
-                    let moms = moms.join("/");
-                    write_all(&vars.parent, "raw.txt", &format!("{:e}|{}|raw|{}#{}\n", t, var_name, configurations, moms));
+                    let configurations = dim.iter().fold(1.0, |acc, &i| acc*i as f64);
+                    if let Some(hdf5) = hdf5_file {
+                        let res = res.chunks(len*w as usize).map(|c| c.iter().map(|v| *v).collect()).collect::<Vec<Vec<_>>>();
+                        hdf5write!(hdf5, vars.parent, t, "raw", &var_name, m &res, shapex w);
+                        attr!(hdf5, vars.parent, t, "raw", "noise_configurations", &configurations);
+                    } else {
+                        let moms = res.chunks(len*w as usize) // keep moments
+                            .map(|c| vvtos(c,w as usize,venot))
+                            .collect::<Vec<String>>();
+                        let configurations = moms.len();
+                        let moms = moms.join("/");
+                        write_all(&vars.parent, "raw.txt", &format!("{:e}|{}|raw|{}#{}\n", t, var_name, configurations, moms));
+                    }
                 } else {
                     let len = vars.len;
                     let raw = h.get_firsts(&vars.dvars[id].0,len*w as usize)?.VF64();
-                    write_all(&vars.parent, "raw.txt", &format!("{:e}|{}|raw|{}\n", t, var_name,
-                            vvtos(&raw,w as usize,venot)
-                    ));
+                    if let Some(hdf5) = hdf5_file {
+                        hdf5write!(hdf5, vars.parent, t, "raw", &var_name, &raw, shapex w);
+                    } else {
+                        write_all(&vars.parent, "raw.txt", &format!("{:e}|{}|raw|{}\n", t, var_name,
+                                vvtos(&raw,w as usize,venot)
+                        ));
+                    }
                 }
             }},
             Anisotropy(pairs) => {
@@ -494,10 +531,16 @@ impl Action {
                         //let moms = res.chunks(num*w as usize) // use moments
                         //    .map(|c| vvtos(c,w as usize,venot))
                         //    .collect::<Vec<String>>();
-                        let moms = vvtos(&res, w as usize, venot);
-                        write_all(&vars.parent, "anisotropy.txt", &format!("{:e}|{}|anisotropy|{}#{}\n", t, format!("{}-{}", var_name1, var_name2), configurations, moms));
-                        //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
-                        //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
+                        if let Some(hdf5) = hdf5_file {
+                            hdf5write!(hdf5, vars.parent, t, "anisotropy", &format!("{}-{}", var_name1, var_name2), m &res.into_iter().map(|m| vec![m]).collect::<Vec<_>>());
+                            attr!(hdf5, vars.parent, t, "anisotropy", "noise_configurations", &configurations);
+                        } else {
+                            let moms = vvtos(&res, w as usize, venot);
+                            write_all(&vars.parent, "anisotropy.txt", &format!("{:e}|{}|anisotropy|{}#{}\n", t, format!("{}-{}", var_name1, var_name2), configurations, moms));
+
+                            //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));
+                            //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
+                        }
 
                     } else {
                         // WARNING: considers that w is 1
@@ -505,7 +548,11 @@ impl Action {
                         let sum2 = h.get_first("tmp2")?.F64();
                         let anisotropy = if sum1-sum2 == 0.0 { 0.0 } else { (sum1-sum2)/(sum1+sum2) };
                         //let cumulants = moments_to_cumulants(&moments, w as _);
-                        write_all(&vars.parent, "anisotropy.txt", &format!("{:e}|{}|anisotropy|{}\n", t, format!("{}-{}", var_name1, var_name2), anisotropy));
+                        if let Some(hdf5) = hdf5_file {
+                            hdf5write!(hdf5, vars.parent, t, "anisotropy", &format!("{}-{}", var_name1, var_name2), &vec![anisotropy]);
+                        } else {
+                            write_all(&vars.parent, "anisotropy.txt", &format!("{:e}|{}|anisotropy|{}\n", t, format!("{}-{}", var_name1, var_name2), anisotropy));
+                        }
                         //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,vvtos(&cumulants,w as usize,venot)));
                     }
                 }}
