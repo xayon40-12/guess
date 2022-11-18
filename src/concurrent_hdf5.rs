@@ -25,16 +25,33 @@ impl ConcurrentHDF5 {
         let data = self
             .file
             .dataset(path)
-            .map_err(HDF5Error)?
-            .read_raw()
+            .and_then(|d| d.read_raw())
             .map_err(HDF5Error);
         self.lock.unlock().map_err(FslockError)?;
         data
     }
 
+    fn prepare_group(&mut self, path: &str) -> Result<hdf5::Group, hdf5::Error> {
+        let paths = path.split("/").collect::<Vec<_>>();
+        let mut group = self.file.group("/");
+        for p in &paths {
+            group = group.and_then(|g| {
+                g.member_names().and_then(|m| {
+                    if m.contains(&p.to_string()) {
+                        g.group(p)
+                    } else {
+                        g.create_group(p)
+                    }
+                })
+            });
+        }
+        group
+    }
+
     pub fn write_data<'d, A, T, D>(
         &mut self,
         path: &str,
+        name: &str,
         data: A,
     ) -> Result<(), ConcurrentHDF5Error>
     where
@@ -43,26 +60,13 @@ impl ConcurrentHDF5 {
         D: Dimension,
     {
         self.lock.lock().map_err(FslockError)?;
-        let paths = path.split("/").collect::<Vec<_>>();
-        let name = paths[paths.len() - 1];
-        let mut group = self.file.group("/").map_err(HDF5Error)?;
-        for p in &paths[0..paths.len() - 1] {
-            if group
-                .member_names()
-                .map_err(HDF5Error)?
-                .contains(&p.to_string())
-            {
-                group = group.group(p).map_err(HDF5Error)?;
-            } else {
-                group = group.create_group(p).map_err(HDF5Error)?;
-            }
-        }
-        group
-            .new_dataset_builder()
-            .with_data(data)
-            .create(name)
-            .map_err(HDF5Error)?;
-        self.lock.unlock().map_err(FslockError)
+        let group = self.prepare_group(path);
+        let err = group
+            .and_then(|g| g.new_dataset_builder().with_data(data).create(name))
+            .map_err(HDF5Error)
+            .map(|_| ());
+        self.lock.unlock().map_err(FslockError)?;
+        err
     }
 
     pub fn update_group_attr<T: H5Type>(
@@ -73,26 +77,31 @@ impl ConcurrentHDF5 {
         default: &T,
     ) -> Result<T, ConcurrentHDF5Error> {
         self.lock.lock().map_err(FslockError)?;
-        let group = self.file.group(path).map_err(HDF5Error)?;
-        if !group
-            .attr_names()
-            .map_err(HDF5Error)?
-            .contains(&attr_name.to_string())
-        {
-            group
-                .new_attr::<T>()
-                .create(attr_name)
-                .map_err(HDF5Error)?
-                .write_scalar(default)
-                .map_err(HDF5Error)?;
-        };
-        let attr = group.attr(attr_name).map_err(HDF5Error)?;
-        let data = attr.read_scalar::<T>().map_err(HDF5Error)?;
-        let updated = f(data);
-        attr.write_scalar(&updated).map_err(HDF5Error)?;
-
+        let group = self.prepare_group(path);
+        let group = group.and_then(|g| {
+            g.attr_names()
+                .and_then(|n| {
+                    if n.contains(&attr_name.to_string()) {
+                        Ok(())
+                    } else {
+                        g.new_attr::<T>()
+                            .create(attr_name)
+                            .and_then(|g| g.write_scalar(default))
+                    }
+                })
+                .and(Ok(g))
+        });
+        let updated = group
+            .and_then(|g| g.attr(attr_name))
+            .and_then(|attr| {
+                attr.read_scalar::<T>().and_then(|d| {
+                    let updated = f(d);
+                    attr.write_scalar(&updated).and(Ok(updated))
+                })
+            })
+            .map_err(HDF5Error);
         self.lock.unlock().map_err(FslockError)?;
 
-        Ok(updated)
+        updated
     }
 }

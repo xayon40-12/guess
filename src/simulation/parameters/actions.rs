@@ -164,8 +164,8 @@ macro_rules! attr {
     };
 }
 macro_rules! hdf5write {
-    ($storage:ident, $path:expr, $data:expr) => {
-        if let Err(e) = $storage.write_data($path, $data) {
+    ($storage:ident, $path:expr, $name:expr, $data:expr) => {
+        if let Err(e) = $storage.write_data($path, $name, $data) {
             eprintln!(
                 "Error in writing data at \"{}\" in hdf5 file:\n{:?}",
                 $path, e
@@ -226,18 +226,18 @@ impl Action {
 
                     macro_rules! save_radial {
                         ($hdf5:ident, $data:ident, $iner_location:expr) => {
-                            let location = &format!("{}/{:e}/window/{}{}", vars.parent, t, var_name, $iner_location);
+                            let location = &format!("{}/t/{:e}/window/{}{}", vars.parent, t, var_name, $iner_location);
                             let data_pos = $data.iter().map(|r| r.pos).collect::<Vec<_>>();
                             let s = $data[0].vals.len();
                             let l = $data.len();
                             if s == 1 {
                                 let data_vals = $data.iter().map(|r| r.vals[0]).collect::<Vec<_>>();
-                                hdf5write!($hdf5, &format!("{}/{}", location, name), &data_vals);
+                                hdf5write!($hdf5, &location, &name, &data_vals);
                             } else {
                                 let data_vals = Array::from_shape_vec((l,s), $data.iter().flat_map(|r| r.vals.clone()).collect()).expect("Wrong array shape in Window hdf5 storing");
-                                hdf5write!($hdf5, &format!("{}/{}", location, name), &data_vals);
+                                hdf5write!($hdf5, &location, &name, &data_vals);
                             }
-                            hdf5write!($hdf5, &format!("{}/coord", location), &data_pos);
+                            hdf5write!($hdf5, location, "coord", &data_pos);
                             attr!($hdf5, location, "noise_configurations", &configurations);
                         };
                         ($hdf5:ident, $data:ident) => {
