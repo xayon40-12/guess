@@ -1,5 +1,5 @@
 .DS_Store
-._*
+.*
 target/
 **/*.rs.bk
 examples/*_0/

@@ -21,8 +21,13 @@ pub struct HDF5Data<T> {
 impl ConcurrentHDF5 {
     pub fn new(name: &str) -> Result<ConcurrentHDF5, ConcurrentHDF5Error> {
         let file = hdf5::File::append(name).map_err(HDF5Error)?;
-        let name = name.to_string().replace("/", "#");
-        let lock = fslock::LockFile::open(&format!("/tmp/{}.lock", name)).map_err(FslockError)?; // TODO: use full path to file as a nome where the '/' were replaced by '#' and store the lock file in /tmp
+        let (path, name) = if let Some(p) = name.rfind('/') {
+            (&name[..p + 1], &name[p + 1..])
+        } else {
+            ("", name)
+        };
+        let lock =
+            fslock::LockFile::open(&format!("{}.{}.lock", path, name)).map_err(FslockError)?; // TODO: use full path to file as a nome where the '/' were replaced by '#' and store the lock file in /tmp
         Ok(ConcurrentHDF5 { file, lock })
     }
     pub fn read_data<T: H5Type>(&mut self, path: &str) -> Result<HDF5Data<T>, ConcurrentHDF5Error> {
