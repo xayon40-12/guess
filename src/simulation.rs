@@ -398,6 +398,7 @@ fn extract_symbols(
     let lensum = 2 * len / (sumdims[0] * sumdims[1] * sumdims[2]);
     let num = 4;
     let momsum = num * sumdims[0] * sumdims[1] * sumdims[2];
+    let mlen = len.max(lensum).max(momsum);
 
     //TODO verify that there is no link between two noise that start whith an initial condition
     //that differ of 1.
@@ -410,7 +411,7 @@ fn extract_symbols(
     h = h.load_algorithm("sum");
     h = h.load_algorithm("max");
     h = h.load_algorithm("correlation");
-    h = h.load_algorithm("FFT");
+    //h = h.load_algorithm("FFT");
     h = h.load_algorithm_named("philox4x32_10", "noise");
     h = h.load_kernel("complex_from_real");
     h = h.load_kernel("kc_sqrmod");
@@ -1018,17 +1019,14 @@ fn extract_symbols(
             .for_each(|n| n.set_name(format!("src{}", n.name())));
     }
 
-    h = h.add_buffer("tmp", Len(F64(0.0), len * max));
-    h = h.add_buffer("tmp2", Len(F64(0.0), len * max));
-    h = h.add_buffer("sum", Len(F64(0.0), len * max));
-    h = h.add_buffer("sumdst", Len(F64(0.0), lensum * max));
-    h = h.add_buffer("moments", Len(F64(0.0), momsum * max));
-    h = h.add_buffer("cumulants", Len(F64(0.0), momsum * max));
-    h = h.add_buffer("summoments", Len(F64(0.0), momsum * max));
-    h = h.add_buffer("srcFFT", Len(F64_2([0.0, 0.0]), len * max));
-    h = h.add_buffer("tmpFFT", Len(F64_2([0.0, 0.0]), len * max));
-    h = h.add_buffer("dstFFT", Len(F64_2([0.0, 0.0]), len * max));
-    h = h.add_buffer("initFFT", Len(F64_2([0.0, 0.0]), len * max));
+    h = h.add_buffer("tmp", Len(F64(0.0), mlen * max));
+    h = h.add_buffer("tmp2", Len(F64(0.0), mlen * max));
+    h = h.add_buffer("tmp3", Len(F64(0.0), mlen * max));
+    h = h.add_buffer("sum", Len(F64(0.0), mlen * max));
+    //h = h.add_buffer("srcFFT", Len(F64_2([0.0, 0.0]), len * max));
+    //h = h.add_buffer("tmpFFT", Len(F64_2([0.0, 0.0]), len * max));
+    //h = h.add_buffer("dstFFT", Len(F64_2([0.0, 0.0]), len * max));
+    //h = h.add_buffer("initFFT", Len(F64_2([0.0, 0.0]), len * max));
 
     let mut handler = h.build()?;
     if init_kernels.len() > 0 {

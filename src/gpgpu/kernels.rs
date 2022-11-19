@@ -217,6 +217,12 @@ pub fn kernels() -> HashMap<&'static str, Kernel<'static>> {
             ,
             needed: vec![]
         },
+        Kernel {
+            name: "anisotropy",
+            args: vec![KCBuffer("dst",CF64),KCBuffer("x",CF64),KCBuffer("y",CF64)],
+            src: "    dst[x] = (x-y == 0)?0:(x-y)/(x+y);",
+            needed: vec![],
+        },
         ].into_iter().map(|k| (k.name,k)).collect()
 }
 
@@ -258,7 +264,13 @@ pub fn radial(
             Origin::Center => p[i],
             Origin::Corner => (p[i] + dm[i]) % dim[i], // FIXME this might not work for odd dim
         };
-        ((pp as f64 - dm[i] as f64) * if weighted { weight[i] / dim[i] as f64 } else { 1.0 }).powf(2.0)
+        ((pp as f64 - dm[i] as f64)
+            * if weighted {
+                weight[i] / dim[i] as f64
+            } else {
+                1.0
+            })
+        .powf(2.0)
     };
     let pos = |i: usize| {
         let x = i % dim[0];
@@ -295,7 +307,7 @@ pub fn radial(
         let a = res[0][i].pos;
         let b = res[0][j].pos;
         // if to numbers have at least 14 same digits, the distance is considered to be equal.
-        if a==b || f64::abs(a-b)/f64::min(a,b) < 1e-14 {
+        if a == b || f64::abs(a - b) / f64::min(a, b) < 1e-14 {
             counts[j] += 1;
             res.iter_mut().for_each(|res| {
                 for vd in 0..vec_dim {
