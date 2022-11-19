@@ -88,22 +88,6 @@ impl Simulation {
     ) -> crate::gpgpu::Result<()> {
         let paramstr = std::fs::read_to_string(file_name)
             .expect(&format!("Could not find parameter file \"{}\".", file_name));
-        let param: Param = match file_name
-            .rfind('.')
-            .and_then(|p| Some(&file_name[p + 1..]))
-            .unwrap_or("")
-        {
-            "yaml" => serde_yaml::from_str(&paramstr).expect(&format!(
-                "Could not convert yaml in file \"{}\".",
-                file_name
-            )),
-            "ron" => ron::de::from_str(&paramstr)
-                .expect(&format!("Could not convert ron in file \"{}\".", file_name)),
-            a @ _ => panic!(
-                "Unrecognised extension \"{}\" for parameter file \"{}\".",
-                a, file_name
-            ),
-        };
         //let directory = std::path::Path::new(file_name);
         //if let Some(directory) = directory.parent() {
         //    if directory.exists() {
@@ -111,7 +95,6 @@ impl Simulation {
         //    }
         //}
 
-        let mut handler = Handler::builder()?;
         //WARNING if there is no file extension but there is a "." in the path name, the behaviour
         //is wrong
         let parent = if let Some(i) = file_name.rfind('.') {
@@ -120,10 +103,6 @@ impl Simulation {
             file_name
         }
         .to_string();
-        if check {
-            extract_symbols(handler, param, parent, true, 0)?;
-            return Ok(());
-        }
 
         let upparent = if let Some(i) = parent.rfind('/') {
             &parent[..i + 1]
@@ -131,29 +110,6 @@ impl Simulation {
             ""
         }
         .to_string();
-        if let Some(data_files) = &param.data_files {
-            for f in data_files {
-                let name = if let Some(i) = f.rfind('/') {
-                    &f[i + 1..]
-                } else {
-                    f
-                };
-                let name = if let Some(i) = name.find('.') {
-                    &name[..i]
-                } else {
-                    name
-                };
-                handler = handler.load_data(
-                    name,
-                    Format::Column(
-                        &std::fs::read_to_string(&format!("{}{}", &upparent, f))
-                            .expect(&format!("Could not find data file \"{}\".", f)),
-                    ),
-                    false,
-                    None,
-                ); //TODO autodetect format from file extension
-            }
-        }
 
         macro_rules! update {
             ($storage:ident, $path:expr, $attr:expr, $v:expr, $i:expr) => {
@@ -162,11 +118,64 @@ impl Simulation {
                 }
             };
         }
+        macro_rules! param {
+            ($param:ident, $paramstr:expr) => {
+                let $param: Param = match file_name
+                    .rfind('.')
+                    .and_then(|p| Some(&file_name[p + 1..]))
+                    .unwrap_or("")
+                {
+                    "yaml" => serde_yaml::from_str(&$paramstr).expect(&format!(
+                        "Could not convert yaml in file \"{}\".",
+                        file_name
+                    )),
+                    "ron" => ron::de::from_str(&$paramstr)
+                        .expect(&format!("Could not convert ron in file \"{}\".", file_name)),
+                    a @ _ => panic!(
+                        "Unrecognised extension \"{}\" for parameter file \"{}\".",
+                        a, file_name
+                    ),
+                };
+            };
+        }
 
+        if check {
+            param!(param, paramstr);
+            let handler = Handler::builder()?;
+            extract_symbols(handler, param, parent, true, 0)?;
+            return Ok(());
+        }
         let run = |parent: &String,
                    hdf5_file: &mut Option<ConcurrentHDF5>,
                    id: u64|
          -> crate::gpgpu::Result<IntegratorParam> {
+            let paramstr = paramstr.replace("@ID", &id.to_string());
+            //let mut handler = handler.clone();
+            let mut handler = Handler::builder()?;
+            param!(param, paramstr);
+            if let Some(data_files) = &param.data_files {
+                for f in data_files {
+                    let name = if let Some(i) = f.rfind('/') {
+                        &f[i + 1..]
+                    } else {
+                        f
+                    };
+                    let name = if let Some(i) = name.find('.') {
+                        &name[..i]
+                    } else {
+                        name
+                    };
+                    handler = handler.load_data(
+                        name,
+                        Format::Column(
+                            &std::fs::read_to_string(&format!("{}{}", &upparent, f))
+                                .expect(&format!("Could not find data file \"{}\".", f)),
+                        ),
+                        false,
+                        None,
+                    ); //TODO autodetect format from file extension
+                }
+            }
             let parent = &format!("{}/{}", parent, id);
             if let Some(hdf5) = hdf5_file {
                 let unicode =
@@ -183,9 +192,8 @@ impl Simulation {
                 std::fs::write(&dst, &paramstr)
                     .expect(&format!("Could not write parameter file to \"{}\"", dst));
             }
-            let mut sim =
-                extract_symbols(handler.clone(), param.clone(), parent.clone(), false, id)?
-                    .expect("Unexpected error: no Simulation available after extracting symbols");
+            let mut sim = extract_symbols(handler, param.clone(), parent.clone(), false, id)?
+                .expect("Unexpected error: no Simulation available after extracting symbols");
             sim.run(hdf5_file)
         };
 
@@ -197,7 +205,7 @@ impl Simulation {
                 let count = $intprm.count;
                 let parent_id = format!("{}/{}", $parent, $i);
                 if let Some(storage) = &mut hdf5_file {
-                    match storage.update_group_attr(&$parent, "done_count", |i| i + 1, &0) {
+                    match storage.update_group_attr(&$parent, "nb_done", |i| i + 1, &0) {
                         Err(e) => eprintln!(
                             "Error in update \"done_count\" attribute in hdf5 file:\n{:?}",
                             e
