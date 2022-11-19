@@ -31,7 +31,7 @@ fn main() -> crate::gpgpu::Result<()> {
                           .get_matches();
 
     let var = "GUESS_RUN";
-    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(\d+)?(=)?(\d+))?").unwrap();
+    let rarg = Regex::new(r"((?:.*/)?[^:]+)(?::(\d+)?(=)?(\d+))?(#\d+)?").unwrap();
     let extract = |param: &str| {
         let caps = rarg.captures(param).expect("Input args should be in the form \"file_name:number\" where \":number\" is optional (\"file_name\" may contains \":\").");
         let param: String = caps[1].into();
@@ -66,12 +66,21 @@ fn main() -> crate::gpgpu::Result<()> {
         } else {
             NoNum
         };
-        (param, num)
+        let total_to_fuse = if let Some(tot) = caps.get(5).and_then(|n| Some(n.as_str())) {
+            Some(
+                tot[1..]
+                    .parse::<usize>()
+                    .expect(&format!("Could not convert \"{}\" to number.", &caps[4])),
+            )
+        } else {
+            None
+        };
+        (param, num, total_to_fuse)
     };
     let run_sim = |params: Vec<&str>| -> crate::gpgpu::Result<()> {
         for param in params {
-            let (param, num) = extract(param);
-            match Simulation::from_param(&param, num, false) {
+            let (param, num, total_to_fuse) = extract(param);
+            match Simulation::from_param(&param, num, total_to_fuse, false) {
                 Err(OclCore(ProgramBuild(log))) => {
                     eprintln!(
                         "Error while processing param \"{}\":\nBuild error:\n{}",
@@ -90,7 +99,7 @@ fn main() -> crate::gpgpu::Result<()> {
     if let Some(run) = matches.subcommand_matches("run") {
         run_sim(run.values_of("INPUT").unwrap().map(|i| i.into()).collect())?;
     } else if let Some(check) = matches.subcommand_matches("check") {
-        Simulation::from_param(&check.value_of("INPUT").unwrap(), NoNum, true)?;
+        Simulation::from_param(&check.value_of("INPUT").unwrap(), NoNum, None, true)?;
     } else if let Some(fuseargs) = matches.subcommand_matches("fuse") {
         fuse(vec![fuseargs.value_of("INPUT").unwrap().to_string()]);
     } else {

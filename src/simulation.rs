@@ -84,6 +84,7 @@ impl Simulation {
     pub fn from_param<'a>(
         file_name: &'a str,
         num: NumType,
+        total_to_fuse: Option<usize>,
         check: bool,
     ) -> crate::gpgpu::Result<()> {
         let paramstr = std::fs::read_to_string(file_name)
@@ -210,8 +211,12 @@ impl Simulation {
                             "Error in update \"done_count\" attribute in hdf5 file:\n{:?}",
                             e
                         ),
-                        Ok(_o) => {
-                            // if updated == total_count_to_simulate { // TODO: fuse }
+                        Ok(current_tot) => {
+                            if let Some(tot) = total_to_fuse {
+                                if current_tot == tot {
+                                    // TODO: fuse
+                                }
+                            }
                         }
                     }
                     update!(storage, &parent_id, "done", &true, $i);
