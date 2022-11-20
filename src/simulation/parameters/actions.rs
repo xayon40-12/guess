@@ -311,7 +311,7 @@ impl Action {
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|cumulants|{}\n", t, var_name,&cumulants));
 
                 } else {
-                    let moments = h.get_firsts("moments",num*w as usize)?.VF64();
+                    let moments = h.get_firsts("tmp2",num*w as usize)?.VF64();
                     //let cumulants = moments_to_cumulants(&moments, w as _);
                     if let Some(hdf5) = hdf5_file {
                         hdf5write!(hdf5, vars.parent, t, "moments", &var_name, &moments, shapex w);
