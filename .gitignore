@@ -2,6 +2,7 @@
 .*
 target/
 **/*.rs.bk
-examples/*_0/
+examples/*/
 examples/**/*.h5
+!expamples/trento
 Cargo.lock

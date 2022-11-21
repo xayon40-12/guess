@@ -198,7 +198,7 @@ impl Simulation {
             sim.run(hdf5_file)
         };
 
-        let mut hdf5_file = ConcurrentHDF5::new("data.h5").ok();
+        let mut hdf5_file = None; // ConcurrentHDF5::new("data.h5").ok();
 
         macro_rules! done {
             ($t_start:ident $intprm:ident $parent:ident $i:ident) => {
