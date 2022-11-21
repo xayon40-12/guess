@@ -1,3 +1,4 @@
+use crate::concurrent_hdf5::AttributeType;
 use crate::concurrent_hdf5::ConcurrentHDF5;
 use crate::gpgpu::algorithms::ReduceParam;
 use crate::gpgpu::algorithms::{
@@ -156,7 +157,7 @@ fn renot(v: &Radial) -> String {
 macro_rules! attr {
     ($storage:ident, $parent:expr, $t:expr, $observable:expr, $attr:expr, $v:expr) => {
         let location = &format!("{}/t/{:e}/{}", $parent, $t, $observable);
-        if let Err(e) = $storage.update_group_attr(location, $attr, |i| i, $v) {
+        if let Err(e) = $storage.update_attr(location, $attr, AttributeType::Group, |i| i, $v) {
             eprintln!(
                 "Error in setting \"{}\" attribute in hdf5 file:\n{:?}",
                 $attr, e

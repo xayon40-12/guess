@@ -1,5 +1,6 @@
 Param(
   data_files: Some(["m2.txt"]),
+  output: Some(HDF5("data.h5")),
   actions: [
     (Moments(["nb"]), TotalInterval(from: 0, to: 3, total: 100)),
     (Window(["nb"], Every(2)), TotalInterval(from: 0, to: 3, total: 100)),

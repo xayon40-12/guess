@@ -1,3 +1,4 @@
+use crate::concurrent_hdf5::AttributeType;
 use crate::concurrent_hdf5::ConcurrentHDF5;
 use crate::gpgpu::algorithms::{AlgorithmParam::*, RandomType};
 use crate::gpgpu::data_file::Format;
@@ -45,8 +46,9 @@ pub enum NumType {
 use NumType::*;
 
 use self::parameters::InitFormat;
+use self::parameters::OutputType;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EquationKernel {
     kernel_name: String,
     args: Vec<(String, String)>,
@@ -80,6 +82,17 @@ pub struct Simulation {
     vars: Vars,
 }
 
+macro_rules! update {
+    ($storage:ident, $path:expr, $attr:expr, $v:expr, $i:expr) => {
+        if let Err(e) = $storage.update_attr($path, $attr, AttributeType::Group, |i| i, $v) {
+            eprintln!(
+                "Error in update \"{}\" attribute in hdf5 file for simulation number {}:\n{:?}",
+                $attr, $i, e
+            );
+        }
+    };
+}
+
 impl Simulation {
     pub fn from_param<'a>(
         file_name: &'a str,
@@ -111,14 +124,6 @@ impl Simulation {
             ""
         }
         .to_string();
-
-        macro_rules! update {
-            ($storage:ident, $path:expr, $attr:expr, $v:expr, $i:expr) => {
-                if let Err(e) = $storage.update_group_attr($path,$attr,|i| i,$v) {
-                    eprintln!("Error in update \"{}\" attribute in hdf5 file for simulation number {}:\n{:?}", $attr, $i, e);
-                }
-            };
-        }
         macro_rules! param {
             ($param:ident, $paramstr:expr) => {
                 let $param: Param = match file_name
@@ -143,13 +148,10 @@ impl Simulation {
         if check {
             param!(param, paramstr);
             let handler = Handler::builder()?;
-            extract_symbols(handler, param, parent, true, 0)?;
+            extract_symbols(handler, param, paramstr, parent, true, 0)?;
             return Ok(());
         }
-        let run = |parent: &String,
-                   hdf5_file: &mut Option<ConcurrentHDF5>,
-                   id: u64|
-         -> crate::gpgpu::Result<IntegratorParam> {
+        let run = |parent: &String, id: u64| -> crate::gpgpu::Result<IntegratorParam> {
             let paramstr = paramstr.replace("@ID", &id.to_string());
             //let mut handler = handler.clone();
             let mut handler = Handler::builder()?;
@@ -178,74 +180,25 @@ impl Simulation {
                 }
             }
             let parent = &format!("{}/{}", parent, id);
-            if let Some(hdf5) = hdf5_file {
-                let unicode =
-                    VarLenUnicode::from_str(&paramstr).expect("Inalide unicode in parameter file.");
-                update!(hdf5, parent, "param", &unicode, id);
-            } else {
-                let targetstr = format!("{}/config", parent);
-                let target = std::path::Path::new(&targetstr);
-                std::fs::create_dir_all(&target).expect(&format!(
-                    "Could not create destination directory \"{:?}\"",
-                    &target
-                ));
-                let dst = format!("{}/config/param.ron", parent);
-                std::fs::write(&dst, &paramstr)
-                    .expect(&format!("Could not write parameter file to \"{}\"", dst));
-            }
-            let mut sim = extract_symbols(handler, param.clone(), parent.clone(), false, id)?
-                .expect("Unexpected error: no Simulation available after extracting symbols");
-            sim.run(hdf5_file)
+            let (mut sim, hdf5_file) =
+                extract_symbols(handler, param.clone(), paramstr, parent.clone(), false, id)?
+                    .expect("Unexpected error: no Simulation available after extracting symbols");
+
+            sim.run(total_to_fuse, hdf5_file, id)
         };
 
-        let mut hdf5_file = None; // ConcurrentHDF5::new("data.h5").ok();
-
-        macro_rules! done {
-            ($t_start:ident $intprm:ident $parent:ident $i:ident) => {
-                let t_end = $t_start.elapsed().as_secs_f32();
-                let count = $intprm.count;
-                let parent_id = format!("{}/{}", $parent, $i);
-                if let Some(storage) = &mut hdf5_file {
-                    match storage.update_group_attr(&$parent, "nb_done", |i| i + 1, &0) {
-                        Err(e) => eprintln!(
-                            "Error in update \"done_count\" attribute in hdf5 file:\n{:?}",
-                            e
-                        ),
-                        Ok(current_tot) => {
-                            if let Some(tot) = total_to_fuse {
-                                if current_tot == tot {
-                                    // TODO: fuse
-                                }
-                            }
-                        }
-                    }
-                    update!(storage, &parent_id, "done", &true, $i);
-                    update!(storage, &parent_id, "elapsed", &t_end, $i);
-                    update!(storage, &parent_id, "count", &count, $i);
-                } else {
-                    let mut done = std::fs::File::create(format!("{}/config/done", parent_id))?;
-                    done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
-                }
-            };
-        }
         match num {
             Single(i) => {
-                let t_start = Instant::now();
-                let intprm = run(&parent, &mut hdf5_file, i as _)?; //TODO provide parent without the id
-                done! {t_start intprm parent i}
+                run(&parent, i as _)?; //TODO provide parent without the id
             }
             Multiple(n, start) => {
                 for i in start..n + start {
-                    let t_start = Instant::now();
-                    let intprm = run(&parent, &mut hdf5_file, i as _)?;
-                    done! {t_start intprm parent i}
+                    run(&parent, i as _)?;
                 }
             }
             NoNum => {
-                let t_start = Instant::now();
                 let i = 0;
-                let intprm = run(&parent, &mut hdf5_file, i)?;
-                done! {t_start intprm parent i}
+                run(&parent, i)?;
             }
         }
         Ok(())
@@ -253,8 +206,11 @@ impl Simulation {
 
     pub fn run(
         &mut self,
-        hdf5_file: &mut Option<ConcurrentHDF5>,
+        total_to_fuse: Option<usize>,
+        mut hdf5_file: Option<ConcurrentHDF5>,
+        id: u64,
     ) -> crate::gpgpu::Result<IntegratorParam> {
+        let t_start = Instant::now();
         let Vars {
             t_0,
             t_max,
@@ -272,7 +228,7 @@ impl Simulation {
             ref stage,
             ref noises,
             phy: _,
-            parent: _,
+            ref parent,
         } = self.vars;
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
 
@@ -294,7 +250,7 @@ impl Simulation {
         };
         for (activator, callback) in &mut self.callbacks {
             if activator(intprm.t) {
-                callback(&mut self.handler, &self.vars, hdf5_file, intprm.t)?;
+                callback(&mut self.handler, &self.vars, &mut hdf5_file, intprm.t)?;
             }
         }
         #[cfg(debug_assertions)]
@@ -328,7 +284,7 @@ impl Simulation {
             }
 
             let mut update: Option<Box<dyn Any>> = None;
-            let (inte, equs) = stage;
+            let (inte, equs) = &stage;
             for equ in equs {
                 let mut args = equ
                     .args
@@ -354,11 +310,34 @@ impl Simulation {
 
             for (activator, callback) in &mut self.callbacks {
                 if activator(intprm.t) {
-                    callback(&mut self.handler, &self.vars, hdf5_file, intprm.t)?;
+                    callback(&mut self.handler, &self.vars, &mut hdf5_file, intprm.t)?;
                 }
             }
         }
 
+        let t_end = t_start.elapsed().as_secs_f32();
+        let count = intprm.count;
+        if let Some(storage) = &mut hdf5_file {
+            match storage.update_attr(&parent, "nb_done", AttributeType::Group, |i| i + 1, &0) {
+                Err(e) => eprintln!(
+                    "Error in update \"done_count\" attribute in hdf5 file:\n{:?}",
+                    e
+                ),
+                Ok(current_tot) => {
+                    if let Some(tot) = total_to_fuse {
+                        if current_tot == tot {
+                            // TODO: fuse
+                        }
+                    }
+                }
+            }
+            update!(storage, &parent, "done", &true, id);
+            update!(storage, &parent, "elapsed", &t_end, id);
+            update!(storage, &parent, "count", &count, id);
+        } else {
+            let mut done = std::fs::File::create(format!("{}/config/done", parent))?;
+            done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
+        }
         Ok(intprm)
     }
 }
@@ -366,16 +345,41 @@ impl Simulation {
 fn extract_symbols(
     mut h: HandlerBuilder,
     mut param: Param,
+    paramstr: String,
     parent: String,
     check: bool,
     sim_id: u64,
-) -> crate::gpgpu::Result<Option<Simulation>> {
+) -> crate::gpgpu::Result<Option<(Simulation, Option<ConcurrentHDF5>)>> {
+    let (parent, mut hdf5_file) = match param.output {
+        Some(OutputType::HDF5(hdf5name)) => (parent, ConcurrentHDF5::new(&hdf5name).ok()),
+        Some(OutputType::Text(path)) => (path, None),
+        None => (parent, None),
+    };
+
     let parent_no_id = &parent[..parent.rfind('/').expect("This is a bug: There must be a '/' in the current folder name that separate the simulation name from its id.")];
     let upparent = parent_no_id
         .rfind('/')
         .and_then(|i| Some(&parent[..i + 1]))
         .unwrap_or("")
         .to_string();
+
+    if !check {
+        if let Some(hdf5) = &mut hdf5_file {
+            let unicode =
+                VarLenUnicode::from_str(&paramstr).expect("Inalide unicode in parameter file.");
+            update!(hdf5, &parent, "param", &unicode, sim_id);
+        } else {
+            let targetstr = format!("{}/config", parent);
+            let target = std::path::Path::new(&targetstr);
+            std::fs::create_dir_all(&target).expect(&format!(
+                "Could not create destination directory \"{:?}\"",
+                &target
+            ));
+            let dst = format!("{}/config/param.ron", parent);
+            std::fs::write(&dst, &paramstr)
+                .expect(&format!("Could not write parameter file to \"{}\"", dst));
+        }
+    }
 
     let (dims, phy) = param.config.dim.into();
     let dim: Dim = dims.into();
@@ -1106,11 +1110,14 @@ fn extract_symbols(
         .map(|(c, a)| (a.to_activation(), c.to_callback(&name_to_index, num_pdes)))
         .collect();
 
-    Ok(Some(Simulation {
-        handler,
-        callbacks,
-        vars,
-    }))
+    Ok(Some((
+        Simulation {
+            handler,
+            callbacks,
+            vars,
+        },
+        hdf5_file,
+    )))
 }
 
 fn gen_func(

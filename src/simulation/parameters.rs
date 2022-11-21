@@ -144,6 +144,12 @@ pub enum InitFormat {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum OutputType {
+    HDF5(String),
+    Text(String),
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Param {
     pub data_files: Option<Vec<String>>,
     pub actions: Vec<(Action, Repetition)>,
@@ -154,5 +160,5 @@ pub struct Param {
     pub integrator: Integrator,
     pub default_boundary: Option<String>,
     pub init_file: Option<InitFormat>,
-    pub output: Option<String>,
+    pub output: Option<OutputType>,
 }
