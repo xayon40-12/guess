@@ -22,7 +22,7 @@ CGType = [i for i in sys.argv if "-g" in i]
 if len(CGType) > 0:
     CGType = CGType[0][2:]
 else:
-    CGType = "V100"
+    CGType = "v100"
 
 
 def sub(name, job, start, num):
@@ -37,7 +37,7 @@ def sub(name, job, start, num):
         if num != None:
             name = "%s:%d" % (name, num)
     command = (
-        "qsub -P P_nantheo -l sps=1 -l GPU=1 -l GPUtype=%s -q mc_gpu_long -pe multicores_gpu 4 -v GUESS_RUN='%s' -v EXEC_RUN='%s' %s"
+            "sbatch -p gpu --gres=gpu:%s:1 --export=GUESS_RUN='%s',EXEC_RUN='%s' %s"
         % (CGType, name, runname, thisname)
     )
     print(command)
