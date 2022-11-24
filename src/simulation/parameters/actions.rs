@@ -292,7 +292,7 @@ impl Action {
                     let len = dim[0]*dim[1]*dim[2];
                     let prm = MomentsParam{ num: num as _, vect_dim: w, packed: false };
                     //h.run_arg("moments_to_cumulants", D1(len), &[Buffer("moments"),Buffer("cumulants"),Param("vect_dim",w.into()),Param("num",(num as u32).into())])?;
-                    h.run_algorithm("moments", D2(num,len), &[Y], &["tmp2","tmp","sum","tmp3"], Ref(&prm))?;// WARNING use "cumulants" as tmp buffer
+                    h.run_algorithm("moments", D2(num,len), &[Y], &["tmp2","tmp","sum","tmp3"], Ref(&prm))?;
                     //h.run_arg("to_var",D1(num*w as usize),&[BufArg("tmp3","src")])?;
                     let res = h.get_firsts("tmp3",num*num*w as usize)?.VF64();
                     //let cumulants = vtos(&moments_to_cumulants(&res[0..(num*w as usize)],w as _),enot);
@@ -305,7 +305,7 @@ impl Action {
                         hdf5write!(hdf5, vars.parent, t, "moments", &var_name, m &res, shapex w);
                         attr!(hdf5, vars.parent, t, "moments", "noise_configurations", &len);
                     } else {
-                        let moms = vvtos(&res, w as usize, venot);
+                        let moms = res.chunks(num*w as usize).map(|res| vvtos(&res, w as usize, venot)).collect::<Vec<_>>().join("/");
                         write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|{}#{}\n", t, var_name, len, moms));
                     }
                     //write_all(&vars.parent, "moments.txt", &format!("{:e}|{}|sigma_moments|{}\n", t, var_name,&moms[1]));

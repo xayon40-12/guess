@@ -311,13 +311,17 @@ impl Simulation {
             let mut md = f64::MAX;
             for (activator, callback) in &mut self.callbacks {
                 let d = activator(intprm.t);
-                if d <= 0.0 {
+                if d >= 0.0 && d < intprm.t * 1e-15 {
                     callback(&mut self.handler, &self.vars, &mut hdf5_file, intprm.t)?;
                 } else {
                     md = md.min(d);
                 }
             }
-            //TODO: compare the minimum d to dt to see if dt should be change to access exactly the next time for the observable
+            if md < intprm.dt {
+                intprm.dt = md;
+            } else if md < 2.0 * intprm.dt {
+                intprm.dt = md / 2.0;
+            }
         }
 
         let t_end = t_start.elapsed().as_secs_f32();
