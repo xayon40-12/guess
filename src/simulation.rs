@@ -255,6 +255,7 @@ impl Simulation {
         }
         #[cfg(debug_assertions)]
         let (mut pred, int) = (intprm.t, t_max / 100.0);
+        let mut dtsave = None;
         while intprm.t <= t_max {
             #[cfg(debug_assertions)]
             if intprm.t >= pred + int {
@@ -318,9 +319,18 @@ impl Simulation {
                 }
             }
             if md < intprm.dt {
+                if dtsave.is_none() {
+                    dtsave = Some(intprm.dt);
+                }
                 intprm.dt = md;
             } else if md < 2.0 * intprm.dt {
+                if dtsave.is_none() {
+                    dtsave = Some(intprm.dt);
+                }
                 intprm.dt = md / 2.0;
+            } else if let Some(dt) = dtsave {
+                intprm.dt = dt;
+                dtsave = None;
             }
         }
 
