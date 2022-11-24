@@ -7,22 +7,8 @@ pub mod data;
 pub mod line;
 use data::Data;
 
-fn check(name: &str, val: &str) -> bool {
-    let mut i = 0;
-    let name = name.chars().collect::<Vec<_>>();
-    let val = val.chars().collect::<Vec<_>>();
-    let l = name.len();
-    while i < l && name[i] == val[i] {
-        i += 1;
-    }
-    let l = val.len();
-    while i < l && val[i].is_digit(10) {
-        i += 1;
-    }
-    i == l
-}
-fn folders(name: &str) -> Vec<String> {
-    std::fs::read_dir(".")
+fn folders(dir: &str) -> Vec<String> {
+    std::fs::read_dir(dir)
         .expect("Could not enumerate folders in current dir.")
         .filter_map(|d| {
             d.ok().and_then(|e| {
@@ -33,7 +19,8 @@ fn folders(name: &str) -> Vec<String> {
                 }
             })
         })
-        .filter(|f| check(name, f))
+        .filter(|d| d.chars().all(char::is_numeric))
+        .map(|d| format!("{}/{}", dir, d))
         .collect::<Vec<_>>()
 }
 
@@ -91,7 +78,6 @@ impl Files {
 }
 
 fn search_files(name: &str) -> Files {
-    let name = &format!("{}_", name);
     let folders = folders(name);
     let mut param = None;
     let mut names = None;
@@ -121,7 +107,7 @@ fn search_files(name: &str) -> Files {
 
     let param = param.expect("No param.ron found.");
     let names = names.expect("No observable found.");
-    let targetstr = format!("{}_fuse", name);
+    let targetstr = format!("fuse/{}", name);
     let configstr = format!("{}/config", targetstr);
     let target = std::path::Path::new(&configstr);
     std::fs::create_dir_all(&target)

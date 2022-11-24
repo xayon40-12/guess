@@ -1,10 +1,11 @@
 #!/bin/zsh
 
-for i in */; do
-	name=$(echo $i | sed 's#/##')
-	awk '/\|e\|/' ${i}raw.txt | tail -n 1 | cut -d '|' -f 4 | ths "let {f i [] = []; f i a = take i a:f i (drop i a); d ['\n'] = []; d (a:as) = a:d as}; getContents >>= putStr . d . unlines .  map (d . unlines . map unwords . f 100 . words) . lines" > mat_${name}
+for i in */0/; do
+	name=$(echo $i | sed 's#/0/##')
+	awk '/\|e\|/' ${i}raw.txt | tail -n 1 | cut -d '|' -f 3 | ths "let {f i [] = []; f i a = take i a:f i (drop i a); d ['\n'] = []; d (a:as) = a:d as}; getContents >>= putStr . d . unlines .  map (d . unlines . map unwords . f 100 . words) . lines" > mat_${name}
     t=$(awk '/\|e\|/' ${i}raw.txt | tail -n 1 | cut -d '|' -f 1 | xargs printf "%.3f")
-    awk '/\|T11-T22\|/' ${i}anisotropy.txt | cut -d '|' -f 1,4 | tr '|' ' ' > anisotropy_${name}
+    awk '/\|T11-T22\|/' ${i}anisotropy.txt | cut -d '|' -f 1,3 | tr '|' ' ' > anisotropy_${name}
 	cat anisotropy_${name}
 	gnuplot -p -e 'set term png size 800,800 font "Arial,21"; set output "e.png"; set title "Energy density at t='$t' (fm/c)\ntrento Pb Pb default event"; set xlabel "x (fm)"; set ylabel "y (fm)"; set size ratio 1; set autoscale fix; plot "mat_'$name'" matrix with image noti'
+	gnuplot -p -e 'set term png size 800,800 font "Arial,21"; set output "anisotropy.png"; set title "Momentum anisotropy as function of time\ntrento Pb Pb default event"; set xlabel "t (fm)"; set ylabel "<T11-T22>/<T11+T22>"; plot "anisotropy_'$name'" u 1:2 noti'
 done

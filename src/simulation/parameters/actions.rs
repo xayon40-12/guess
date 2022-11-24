@@ -522,7 +522,7 @@ impl Action {
 
                     let mut dim: [usize;3] = vars.dim.into();
                     let d = dim.iter().fold(1, |a, i| a * i);
-                    h.run_arg("anisotropy", D1(d), &[BufArg(&vars.dvars[id1].0, "x"),BufArg(&vars.dvars[id2].0, "y"),BufArg("tmp", "dst")])?;
+                    h.run_arg("anisotropy", D1(d*w as usize), &[BufArg(&vars.dvars[id1].0, "a"),BufArg(&vars.dvars[id2].0, "b"),BufArg("tmp", "dst")])?;
                     h.run_algorithm(
                         "sum",
                         vars.dim,
@@ -530,13 +530,15 @@ impl Action {
                         &["tmp", "tmp2", "sum"],
                         AlgorithmParam::Ref(&ap),
                     )?;
+                    vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
+                    let len = dim[0]*dim[1]*dim[2];
+                    let summed = d/len;
+                    h.run_arg("cdivides", D1(len*w as usize), &[BufArg("sum","src"),BufArg("sum","dst"),Param("c", (summed as f64).into())])?;
 
                     if vars.dim.len() > 1 && vars.dirs.len() != vars.dim.len() {
-                        vars.dirs.iter().for_each(|d| dim[*d as usize] = 1);
-                        let len = dim[0]*dim[1]*dim[2];
                         let num = 4;
                         let prm = MomentsParam{ num: num as _, vect_dim: w, packed: false };
-                        h.run_algorithm("moments", D2(1,len), &[Y], &["sum","tmp","tmp2","tmp3"], Ref(&prm))?; // WARNING use "cumulants" as tmp buffer
+                        h.run_algorithm("moments", D2(1,len*w as usize), &[Y], &["sum","tmp","tmp2","tmp3"], Ref(&prm))?; // WARNING use "cumulants" as tmp buffer
                         let res = h.get_firsts("tmp3",num*w as usize)?.VF64();
                         if let Some(hdf5) = hdf5_file {
                             hdf5write!(hdf5, vars.parent, t, "anisotropy", &format!("{}-{}", var_name1, var_name2), m &res.into_iter().map(|m| vec![m]).collect::<Vec<_>>());

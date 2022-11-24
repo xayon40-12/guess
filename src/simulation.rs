@@ -249,7 +249,7 @@ impl Simulation {
             args: vec![],
         };
         for (activator, callback) in &mut self.callbacks {
-            if activator(intprm.t) {
+            if activator(intprm.t) <= 0.0 {
                 callback(&mut self.handler, &self.vars, &mut hdf5_file, intprm.t)?;
             }
         }
@@ -308,11 +308,16 @@ impl Simulation {
                 .downcast()
                 .expect("Integrator algorithm did not return a proper IntegratorParam type.");
 
+            let mut md = f64::MAX;
             for (activator, callback) in &mut self.callbacks {
-                if activator(intprm.t) {
+                let d = activator(intprm.t);
+                if d <= 0.0 {
                     callback(&mut self.handler, &self.vars, &mut hdf5_file, intprm.t)?;
+                } else {
+                    md = md.min(d);
                 }
             }
+            //TODO: compare the minimum d to dt to see if dt should be change to access exactly the next time for the observable
         }
 
         let t_end = t_start.elapsed().as_secs_f32();
@@ -422,9 +427,11 @@ fn extract_symbols(
     h = h.load_kernel("kc_times");
     h = h.load_kernel("kc_times_conj");
     h = h.load_kernel("ctimes");
+    h = h.load_kernel("cdivides");
     h = h.load_kernel("cminus");
     h = h.load_kernel("vcminus");
     h = h.load_kernel("moments_to_cumulants");
+    h = h.load_kernel("anisotropy");
     h = h.load_function("ifNaNInf");
     h = h.load_function("ifelse");
     h = h.load_function("lessthan");

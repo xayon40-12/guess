@@ -219,8 +219,8 @@ pub fn kernels() -> HashMap<&'static str, Kernel<'static>> {
         },
         Kernel {
             name: "anisotropy",
-            args: vec![KCBuffer("dst",CF64),KCBuffer("x",CF64),KCBuffer("y",CF64)],
-            src: "    dst[x] = (x-y == 0)?0:(x-y)/(x+y);",
+            args: vec![KCBuffer("dst",CF64),KCBuffer("a",CF64),KCBuffer("b",CF64)],
+            src: "    dst[x] = (a[x]==0 && b[x]==0)?0:(a[x]-b[x])/(a[x]+b[x]);",
             needed: vec![],
         },
         ].into_iter().map(|k| (k.name,k)).collect()

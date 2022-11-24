@@ -33,7 +33,7 @@ impl ConcurrentHDF5 {
         let lock =
             fslock::LockFile::open(&format!("{}.{}.lock", path, name)).map_err(FslockError)?; // TODO: use full path to file as a nome where the '/' were replaced by '#' and store the lock file in /tmp
         Ok(ConcurrentHDF5 {
-            name: name.into(),
+            name: format!("{}/{}", path, name),
             lock,
         })
     }
