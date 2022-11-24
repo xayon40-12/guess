@@ -79,7 +79,7 @@ impl From<&str> for Line {
 }
 
 fn nums(s: &str) -> IResult<&str, Vec<f64>> {
-    separated_list1(char(':'), double)(s)
+    separated_list1(char(';'), double)(s)
 }
 fn pname(s: &str) -> IResult<&str, String> {
     terminated(take_until1("|"), char('|'))(s).map(|(r, i)| (r, i.to_string()))
@@ -93,7 +93,7 @@ fn pcount(s: &str) -> IResult<&str, Option<u64>> {
 fn pvec(s: &str) -> IResult<&str, Vec<Vec<ArrayT>>> {
     let onlynums = |s| nums(s).map(|(r, ns)| (r, ArrayT::Values(ns)));
     let coordnums = |s| {
-        tuple((double, char(';'), &nums))(s).map(|(r, (c, _, ns))| (r, ArrayT::WithCoord(c, ns)))
+        tuple((double, char(':'), &nums))(s).map(|(r, (c, _, ns))| (r, ArrayT::WithCoord(c, ns)))
     };
     let data = alt((coordnums, onlynums));
     let vecdata = separated_list1(char(' '), data);

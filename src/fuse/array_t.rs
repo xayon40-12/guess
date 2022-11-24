@@ -47,16 +47,16 @@ impl fmt::Display for ArrayT {
                 v.iter()
                     .map(|i| i.to_string())
                     .collect::<Vec<_>>()
-                    .join(",")
+                    .join(";")
             ),
             ArrayT::WithCoord(c, v) => write!(
                 f,
-                "{};{}",
+                "{}:{}",
                 c.to_string(),
                 v.iter()
                     .map(|i| i.to_string())
                     .collect::<Vec<_>>()
-                    .join(","),
+                    .join(";"),
             ),
         }
     }

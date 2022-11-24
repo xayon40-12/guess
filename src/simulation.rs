@@ -256,6 +256,7 @@ impl Simulation {
         #[cfg(debug_assertions)]
         let (mut pred, int) = (intprm.t, t_max / 100.0);
         let mut dtsave = None;
+        let mut tdtcount = vec![(intprm.t, intprm.dt, intprm.count)];
         while intprm.t <= t_max {
             #[cfg(debug_assertions)]
             if intprm.t >= pred + int {
@@ -308,6 +309,7 @@ impl Simulation {
                 .expect("Integrator algorithm must return the next IntegratorParam.")
                 .downcast()
                 .expect("Integrator algorithm did not return a proper IntegratorParam type.");
+            tdtcount.push((intprm.t, intprm.dt, intprm.count));
 
             let mut md = f64::MAX;
             for (activator, callback) in &mut self.callbacks {
@@ -356,6 +358,13 @@ impl Simulation {
         } else {
             let mut done = std::fs::File::create(format!("{}/config/done", parent))?;
             done.write_all(&format!("elapsed: {}\ncount: {}", t_end, count).as_bytes())?;
+            let mut tdtcount_file = std::fs::File::create(format!("{}/config/tdtcount", parent))?;
+            let tdtcount = tdtcount
+                .into_iter()
+                .map(|(t, dt, count)| format!("{} {} {}", t, dt, count))
+                .collect::<Vec<_>>()
+                .join("\n");
+            tdtcount_file.write_all(&tdtcount.as_bytes())?;
         }
         Ok(intprm)
     }
