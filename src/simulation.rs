@@ -316,7 +316,7 @@ impl Simulation {
                 let d = activator(intprm.t);
                 if d >= 0.0 && d < intprm.t * 1e-15 {
                     callback(&mut self.handler, &self.vars, &mut hdf5_file, intprm.t)?;
-                } else {
+                } else if d > 0.0 {
                     md = md.min(d);
                 }
             }
