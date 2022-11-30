@@ -3,6 +3,6 @@
 target/
 **/*.rs.bk
 examples/*/
+!examples/trento/
 examples/**/*.h5
-!expamples/trento
 Cargo.lock
