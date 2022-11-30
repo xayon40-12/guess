@@ -147,7 +147,7 @@ impl DataFile {
             );
 
             (&Function {
-                name: name,
+                name,
                 args,
                 ret_type: Some(CF64),
                 src: &src,
@@ -192,7 +192,7 @@ impl DataFile {
             );
 
             (&Function {
-                name: name,
+                name,
                 args,
                 ret_type: Some(CF64),
                 src: &src,

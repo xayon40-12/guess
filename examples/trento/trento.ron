@@ -1,40 +1,40 @@
 Param(
+  data_files: Some(["../eos/hotQCD/p.txt"]),
   init_file: Some(HDF5(file: "../init.h5", paths_names: [("/event_@ID", "e")])),
   actions: [(RawData(["T11","T22","e"]), Interval(from: 1, to: 10.1, every: 0.1)),
             (Anisotropy([("T11","T22")]), Interval(from: 1, to: 10.1, every: 0.1))],
   config: (t_0: Some(1), t_max: 4, dim: D2S((@N,@L))),
   integrator: Implicit(dt_max: @ER, dt_factor: Some(1.05), er: @ER, scheme: Euler),
   symbols: "
-      p(e) := e/3.0
-      pp(e) := 1.0/3.0
-      vs2 := pp(e)
-      eigk(e,ut,uk) := fabs((fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2))
-      vk(ut,uk) := fabs(uk/ut)
-      eig(e,ut,uk) := fmax(eigk(e,ut,uk),vk(ut,uk))
-      f00(e,t,ut,ux,uy) := ((e+p(e))*ut*ut - p(e))
-      f10(e,t,ut,ux,uy) := ((e+p(e))*ux*ut)
-      f20(e,t,ut,ux,uy) := ((e+p(e))*uy*ut)
-      f11(e,t,ut,ux,uy) := ((e+p(e))*ux*ux + p(e))
-      f21(e,t,ut,ux,uy) := ((e+p(e))*uy*ux)
-      f12(e,t,ut,ux,uy) := ((e+p(e))*ux*uy)
-      f22(e,t,ut,ux,uy) := ((e+p(e))*uy*uy + p(e))
-      f33(e,t,ut,ux,uy) := p(e)
+      eps := 1e-10
+      e0 := 0.00038919
+      small(e,v1,v2) := e<e0?v1:v2
+      pp(e) = small(e,p(e0)*e/e0,p(e))
+      vs2 := ((p(e+eps)-p(e))/eps)
+      eigk(e,ut,uk) = fabs((fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2))
+      vk(ut,uk) = fabs(uk/ut)
+      eig(e,ut,uk) = fmax(eigk(e,ut,uk),vk(ut,uk))
+      f00(e,t,ut,ux,uy) = ((e+pp(e))*ut*ut - pp(e))
+      f10(e,t,ut,ux,uy) = ((e+pp(e))*ux*ut)
+      f20(e,t,ut,ux,uy) = ((e+pp(e))*uy*ut)
+      f11(e,t,ut,ux,uy) = ((e+pp(e))*ux*ux + pp(e))
+      f21(e,t,ut,ux,uy) = ((e+pp(e))*uy*ux)
+      f12(e,t,ut,ux,uy) = ((e+pp(e))*ux*uy)
+      f22(e,t,ut,ux,uy) = ((e+pp(e))*uy*uy + pp(e))
+      f33(e,t,ut,ux,uy) = pp(e)
       vars := e,t,ut,ux,uy
       tT00' = -t*(#KT_x[eigx](f10(vars)) + #KT_y[eigy](f20(vars))) - f33(vars) 
       tT01' = -t*(#KT_x[eigx](f11(vars)) + #KT_y[eigy](f21(vars)))
       tT02' = -t*(#KT_x[eigx](f12(vars)) + #KT_y[eigy](f22(vars)))
-      e'| = (tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*p(e)))/t
+      e'| = (tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*pp(e)))/t
       e'c = fmin(fmax(e,1e-15),1)
-      ut'c = fmin(fmax(sqrt((tT00/t+p(e))/(e+p(e))), 1), 1e7)
-      ux'c = tT01/((e+p(e))*ut*t)
-      uy'c = tT02/((e+p(e))*ut*t)
+      ut'c = fmin(fmax(sqrt((tT00/t+pp(e))/(e+pp(e))), 1), 1e7)
+      ux'c = tT01/((e+pp(e))*ut*t)
+      uy'c = tT02/((e+pp(e))*ut*t)
       T11'c = f11(vars)
       T22'c = f22(vars)
       eigx'c = eig(e,ut,ux)
       eigy'c = eig(e,ut,uy)
-      ut0 := cosh(k(t,R))
-      ux0 := ifNaNInf(X/R, 0)*sinh(k(t,R))
-      uy0 := ifNaNInf(Y/R, 0)*sinh(k(t,R))
       *tT00 = t*f00(e,t,1,0,0)
       *tT01 = 0
       *tT02 = 0

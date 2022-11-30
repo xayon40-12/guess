@@ -630,7 +630,11 @@ fn extract_symbols(
         dpdes,
         dirs.len(),
         global_dim,
-        Some(data_bufs.clone().into_iter().collect()),
+        data_bufs
+            .clone()
+            .into_iter()
+            .map(|(name, buf)| (name, vec![buf]))
+            .collect(),
     );
     let nb_propagate = (1 + max_space_derivative_depth) / 2 + 1; // +1 so that the error is farther handled
     for f in func {
@@ -1277,7 +1281,7 @@ fn parse_symbols(
     mut dpdes: Vec<DPDE>,
     dim: usize,
     global_dim: usize,
-    data_bufs: Option<HashMap<String, String>>,
+    mut data_bufs: HashMap<String, Vec<String>>,
 ) -> (
     Vec<SFunction>,
     Vec<SPDE>,
@@ -1321,6 +1325,9 @@ fn parse_symbols(
     use crate::gpgpu::pde_parser::*;
     let mut lexer_idx = 0;
 
+    let all_data_bufs: HashSet<String> = data_bufs.values().flatten().map(|b| b.clone()).collect();
+    let all_data_bufs = all_data_bufs.into_iter().collect::<Vec<_>>();
+
     for l in symbols.lines() {
         // search for pdes or expressions
         if let Some(caps) = search_pde
@@ -1343,6 +1350,12 @@ fn parse_symbols(
                     vec_dim: 1,
                     boundary: default_boundary.clone(),
                 })
+            }
+        }
+        if let Some(caps) = search_func.captures(&l) {
+            if &caps[3] != ":" {
+                let name = caps[1].to_string();
+                data_bufs.insert(name, all_data_bufs.clone());
             }
         }
     }
@@ -1379,6 +1392,7 @@ fn parse_symbols(
         p = choice(["x,", "y,", "z,"]),
         symbols = symbols
     );
+
     let mut pdes = vec![];
     let mut constraints = vec![];
     let mut equations = vec![];
@@ -1386,8 +1400,11 @@ fn parse_symbols(
 
     macro_rules! parse {
         ($j:ident $nj:ident, $src:ident, $current_var:expr, $compact:expr) => {{
+            parse!($j $nj, vec![], $src, $current_var, $compact)
+        }};
+        ($j:ident $nj:ident, $args:expr, $src:ident, $current_var:expr, $compact:expr) => {{
             let mut parsed = parse(
-                &dpdes,
+                &dpdes.clone().into_iter().filter(|dpde| !$args.contains(&dpde.var_name)).collect::<Vec<_>>(),
                 data_bufs.clone(),
                 &$current_var.and_then(|name: &String| {
                     hdpdes.get(name).and_then(|pde| {
@@ -1442,8 +1459,8 @@ fn parse_symbols(
             found = true;
         }
         if let Some(caps) = search_func.captures(&l) {
-            let name = caps[1].into();
-            let args = caps[2]
+            let name = caps[1].to_string();
+            let mut args = caps[2]
                 .split(",")
                 .map(|i| {
                     let val = i.trim().to_string();
@@ -1455,11 +1472,18 @@ fn parse_symbols(
                         (val, Float)
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
             let mut src = replace(&caps[4], &consts);
             let mut priors = None;
             if &caps[3] != ":" {
-                let (mut res, p) = parse!(j nj, src, None, true);
+                all_data_bufs
+                    .iter()
+                    .for_each(|b| args.push((b.clone(), Indexable)));
+                let args = args
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<String>>();
+                let (mut res, p) = parse!(j nj, args, src, None, true);
                 priors = Some(p);
                 if res.len() == 1 {
                     src = res.pop().unwrap();
@@ -1469,7 +1493,12 @@ fn parse_symbols(
                     );
                 }
             }
-            func.push(gen_func(name, args, src, priors.unwrap_or_default()));
+            func.push(gen_func(
+                name.clone(),
+                args,
+                src,
+                priors.unwrap_or_default(),
+            ));
             found = true;
         }
         macro_rules! beg {

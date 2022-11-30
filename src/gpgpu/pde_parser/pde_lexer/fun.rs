@@ -171,8 +171,9 @@ fn fun_call(s: &str) -> IResult<&str, LexerComp> {
             s,
             compact(l).bind(|mut l| {
                 DATA_BUFS.with(|d| {
-                    if let Some(buf) = d.borrow().get(&name) {
-                        l.push(SPDETokens::Symb(buf.clone()));
+                    if let Some(bufs) = d.borrow().get(&name) {
+                        bufs.iter()
+                            .for_each(|buf| l.push(SPDETokens::Symb(buf.clone())));
                     }
                 });
                 func(&name, l).into()

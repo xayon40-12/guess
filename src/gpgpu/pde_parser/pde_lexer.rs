@@ -33,7 +33,7 @@ thread_local!(
     static CURRENT_VAR: RefCell<Option<SPDETokens>> = RefCell::new(None);
     static GLOBAL_DIM: RefCell<usize> = RefCell::new(0);
     static FUN_LEN: RefCell<usize> = RefCell::new(0);
-    static DATA_BUFS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    static DATA_BUFS: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
 );
 
 fn next_id() -> usize {
@@ -47,7 +47,7 @@ fn next_id() -> usize {
 
 pub fn parse<'a>(
     context: &[DPDE], // var name
-    data_bufs: Option<HashMap<String, String>>,
+    data_bufs: HashMap<String, Vec<String>>,
     current_var: &Option<SPDETokens>, // boundary funciton name
     fun_len: usize,                   // number of existing functions
     global_dim: usize,                // dim
@@ -57,9 +57,7 @@ pub fn parse<'a>(
     CURRENT_VAR.with(|v| *v.borrow_mut() = current_var.clone());
     GLOBAL_DIM.with(|v| *v.borrow_mut() = global_dim);
     FUN_LEN.with(|v| *v.borrow_mut() = fun_len);
-    if let Some(data_bufs) = data_bufs {
-        DATA_BUFS.with(|v| *v.borrow_mut() = data_bufs);
-    }
+    DATA_BUFS.with(|v| *v.borrow_mut() = data_bufs);
     terminated(delimited(space0, expr, space0), eof)(math).finish()
 }
 

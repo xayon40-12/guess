@@ -23,7 +23,7 @@ pub struct Parsed {
 /// 'math' is the mathematical expression to parse.
 pub fn parse<'a>(
     context: &[DPDE],
-    data_bufs: Option<HashMap<String, String>>,
+    data_bufs: HashMap<String, Vec<String>>,
     current_var: &Option<SPDETokens>,
     fun_len: usize,
     global_dim: usize,
@@ -43,7 +43,7 @@ pub fn parse<'a>(
 #[test]
 fn pde_lexer() {
     let parse = |c: &[DPDE], cur: &Option<SPDETokens>, f: usize, gd: usize, m: &str| {
-        parse(c, None, cur, gd, f, m, false).unwrap()
+        parse(c, HashMap::new(), cur, gd, f, m, false).unwrap()
     };
     let u = DPDE {
         var_name: "u".into(),
