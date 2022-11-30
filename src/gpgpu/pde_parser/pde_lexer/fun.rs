@@ -6,6 +6,7 @@ use crate::gpgpu::pde_parser::pde_ir::ir_helper::lexer_compositor::compact;
 use crate::gpgpu::pde_parser::pde_lexer::expr;
 use crate::gpgpu::pde_parser::pde_lexer::var::var;
 use crate::gpgpu::pde_parser::pde_lexer::DiffDir::{Backward, Forward};
+use crate::gpgpu::pde_parser::SPDETokens;
 use crate::gpgpu::DimDir;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
@@ -32,6 +33,7 @@ use super::next_id;
 use super::stag;
 use super::var::aanum;
 use super::CURRENT_VAR;
+use super::DATA_BUFS;
 
 // fix[e,max_iter]<func_name, constraint_name, init>(params...)
 pub fn fix(s: &str) -> IResult<&str, LexerComp> {
@@ -164,7 +166,19 @@ fn fun_call(s: &str) -> IResult<&str, LexerComp> {
         aanum,
         delimited(stag("("), separated_list1(stag(","), expr), stag(")")),
     )(s)
-    .map(|(s, (name, l))| (s, compact(l).bind(|l| func(&name, l).into())))
+    .map(|(s, (name, l))| {
+        (
+            s,
+            compact(l).bind(|mut l| {
+                DATA_BUFS.with(|d| {
+                    if let Some(buf) = d.borrow().get(&name) {
+                        l.push(SPDETokens::Symb(buf.clone()));
+                    }
+                });
+                func(&name, l).into()
+            }),
+        )
+    })
 }
 
 fn bf_diff(s: &str) -> IResult<&str, LexerComp> {

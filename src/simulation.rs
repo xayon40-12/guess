@@ -2,6 +2,7 @@ use crate::concurrent_hdf5::AttributeType;
 use crate::concurrent_hdf5::ConcurrentHDF5;
 use crate::gpgpu::algorithms::{AlgorithmParam::*, RandomType};
 use crate::gpgpu::data_file::Format;
+use crate::gpgpu::descriptors::KernelConstructor;
 use crate::gpgpu::descriptors::{
     BufferConstructor::*, ConstructorTypes::*, KernelArg::*, KernelConstructor::*,
     SFunctionConstructor::*, SKernelConstructor, Types::*,
@@ -148,13 +149,15 @@ impl Simulation {
         if check {
             param!(param, paramstr);
             let handler = Handler::builder()?;
-            extract_symbols(handler, param, paramstr, parent, true, 0)?;
+            let parent = format!("{}/{}", parent, 0);
+            extract_symbols(handler, param, paramstr, parent, vec![], true, 0)?;
             return Ok(());
         }
         let run = |parent: &String, id: u64| -> crate::gpgpu::Result<IntegratorParam> {
             let paramstr = paramstr.replace("@ID", &id.to_string());
             //let mut handler = handler.clone();
             let mut handler = Handler::builder()?;
+            let mut data_bufs = vec![];
             param!(param, paramstr);
             if let Some(data_files) = &param.data_files {
                 for f in data_files {
@@ -168,21 +171,30 @@ impl Simulation {
                     } else {
                         name
                     };
+                    let data_name = format!("data_{}", name);
                     handler = handler.load_data(
                         name,
                         Format::Column(
                             &std::fs::read_to_string(&format!("{}{}", &upparent, f))
                                 .expect(&format!("Could not find data file \"{}\".", f)),
                         ),
-                        false,
-                        None,
+                        true,
+                        Some(data_name.as_str()),
                     ); //TODO autodetect format from file extension
+                    data_bufs.push((name.to_string(), data_name));
                 }
             }
             let parent = &format!("{}/{}", parent, id);
-            let (mut sim, hdf5_file) =
-                extract_symbols(handler, param.clone(), paramstr, parent.clone(), false, id)?
-                    .expect("Unexpected error: no Simulation available after extracting symbols");
+            let (mut sim, hdf5_file) = extract_symbols(
+                handler,
+                param.clone(),
+                paramstr,
+                parent.clone(),
+                data_bufs,
+                false,
+                id,
+            )?
+            .expect("Unexpected error: no Simulation available after extracting symbols");
 
             sim.run(total_to_fuse, hdf5_file, id)
         };
@@ -370,11 +382,17 @@ impl Simulation {
     }
 }
 
+fn add_data_bufs<'a>(args: &mut Vec<KernelConstructor<'a>>, data_bufs: &'a Vec<(String, String)>) {
+    data_bufs
+        .iter()
+        .for_each(|(_, buf)| args.push(KCBuffer(buf, CF64)))
+}
 fn extract_symbols(
     mut h: HandlerBuilder,
     mut param: Param,
     paramstr: String,
     parent: String,
+    data_bufs: Vec<(String, String)>,
     check: bool,
     sim_id: u64,
 ) -> crate::gpgpu::Result<Option<(Simulation, Option<ConcurrentHDF5>)>> {
@@ -612,6 +630,7 @@ fn extract_symbols(
         dpdes,
         dirs.len(),
         global_dim,
+        Some(data_bufs.clone().into_iter().collect()),
     );
     let nb_propagate = (1 + max_space_derivative_depth) / 2 + 1; // +1 so that the error is farther handled
     for f in func {
@@ -655,6 +674,10 @@ fn extract_symbols(
             .collect::<Vec<_>>();
         int_other_pdes.append(&mut noises_names.clone());
         others.append(&mut noises_names.clone());
+        data_bufs.iter().for_each(|(_, buf)| {
+            others.push(buf.clone());
+            int_other_pdes.push(buf.clone());
+        });
         let pde_buffers = pdes.iter().map(|i| i.dvar.clone()).collect::<Vec<_>>();
         for pde in &pdes {
             let name = pde.dvar.clone();
@@ -722,12 +745,14 @@ fn extract_symbols(
     init_equ_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
     init_equ_args.extend(noises_names.iter().map(|n| KCBuffer(&n, CF64)));
     init_equ_args.push(KCParam("t", CF64));
+    add_data_bufs(&mut init_equ_args, &data_bufs);
     let init_equ_args: Vec<SKernelConstructor> =
         init_equ_args.into_iter().map(|a| a.into()).collect();
     let mut constraint_args = vec![KCBuffer("dst", CF64)];
     constraint_args.extend(dvars.iter().map(|pde| KCBuffer(&pde.0, CF64)));
     constraint_args.extend(o_vars_names.iter().map(|n| KCBuffer(n, CF64)));
     constraint_args.extend(noises_names.iter().map(|n| KCBuffer(n, CF64)));
+    add_data_bufs(&mut constraint_args, &data_bufs);
     let constraint_string_id = "constraint_".len();
     constraint_args.extend(
         pure_constraints
@@ -1092,6 +1117,9 @@ fn extract_symbols(
             .collect::<Vec<_>>();
         args.insert(0, BufArg("", ""));
         args.push(Param("t", t_0.into()));
+        data_bufs
+            .iter()
+            .for_each(|(_, buf)| args.push(Buffer(&buf)));
         let init_kernels = init_kernels
             .iter()
             .map(|n| (n.clone(), format!("{}_k1", n.replace("init_", "tmp_dvar_"))))
@@ -1249,6 +1277,7 @@ fn parse_symbols(
     mut dpdes: Vec<DPDE>,
     dim: usize,
     global_dim: usize,
+    data_bufs: Option<HashMap<String, String>>,
 ) -> (
     Vec<SFunction>,
     Vec<SPDE>,
@@ -1359,6 +1388,7 @@ fn parse_symbols(
         ($j:ident $nj:ident, $src:ident, $current_var:expr, $compact:expr) => {{
             let mut parsed = parse(
                 &dpdes,
+                data_bufs.clone(),
                 &$current_var.and_then(|name: &String| {
                     hdpdes.get(name).and_then(|pde| {
                         Some(if pde.vec_dim > 1 {

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::gpgpu::functions::SFunction;
 use crate::gpgpu::pde_parser::pde_ir::ir_helper::to_priors;
 use nom::error::Error;
@@ -21,13 +23,14 @@ pub struct Parsed {
 /// 'math' is the mathematical expression to parse.
 pub fn parse<'a>(
     context: &[DPDE],
+    data_bufs: Option<HashMap<String, String>>,
     current_var: &Option<SPDETokens>,
     fun_len: usize,
     global_dim: usize,
     math: &'a str,
     compact: bool,
 ) -> Result<Parsed, Error<&'a str>> {
-    let (_, parsed) = pde_lexer::parse(context, current_var, fun_len, global_dim, math)?;
+    let (_, parsed) = pde_lexer::parse(context, data_bufs, current_var, fun_len, global_dim, math)?;
     let (ocl, m) = parsed.token.to_ocl(compact);
     Ok(Parsed {
         ocl,
@@ -40,7 +43,7 @@ pub fn parse<'a>(
 #[test]
 fn pde_lexer() {
     let parse = |c: &[DPDE], cur: &Option<SPDETokens>, f: usize, gd: usize, m: &str| {
-        parse(c, cur, gd, f, m, false).unwrap()
+        parse(c, None, cur, gd, f, m, false).unwrap()
     };
     let u = DPDE {
         var_name: "u".into(),

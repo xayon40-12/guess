@@ -427,14 +427,14 @@ impl HandlerBuilder {
         huge_file_buf_name: Option<&str>,
     ) -> Self {
         let data = DataFile::parse(data);
+        if let Some(bufname) = huge_file_buf_name {
+            self = self.add_buffer(bufname, BufferConstructor::Data(data.data.clone().into()));
+        }
         self = self.create_function(if interpolated {
             data.to_function_interpolated(name, huge_file_buf_name.is_some())
         } else {
             data.to_function(name, huge_file_buf_name.is_some())
         });
-        if let Some(bufname) = huge_file_buf_name {
-            self = self.add_buffer(bufname, BufferConstructor::Data(data.data.clone().into()));
-        }
         self.data.insert(name.into(), data);
         self
     }
