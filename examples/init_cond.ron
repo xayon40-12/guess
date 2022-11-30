@@ -1,6 +1,5 @@
 Param(
   init_file: Some(YAML(file: "init_cond.yaml")),
-  data_files: Some(["m2.txt"]),
   actions: [
     (RawData(["u", "v"]), TotalInterval(from: 0, to: 3, total: 1000)),
   ],

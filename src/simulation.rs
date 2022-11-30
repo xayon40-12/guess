@@ -160,17 +160,7 @@ impl Simulation {
             let mut data_bufs = vec![];
             param!(param, paramstr);
             if let Some(data_files) = &param.data_files {
-                for f in data_files {
-                    let name = if let Some(i) = f.rfind('/') {
-                        &f[i + 1..]
-                    } else {
-                        f
-                    };
-                    let name = if let Some(i) = name.find('.') {
-                        &name[..i]
-                    } else {
-                        name
-                    };
+                for (f, name) in data_files {
                     let data_name = format!("data_{}", name);
                     handler = handler.load_data(
                         name,

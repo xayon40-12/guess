@@ -151,7 +151,7 @@ pub enum OutputType {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Param {
-    pub data_files: Option<Vec<String>>,
+    pub data_files: Option<Vec<(String, String)>>,
     pub actions: Vec<(Action, Repetition)>,
     pub fields: Option<Vec<Field>>,
     pub noises: Option<Vec<Noises>>,
