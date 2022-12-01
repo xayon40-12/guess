@@ -38,6 +38,11 @@ impl Line {
     pub fn mean(&mut self) {
         *self /= self.count;
     }
+    pub fn is_nan(&self) -> bool {
+        self.vec.iter().fold(false, |acc, v| {
+            acc || v.iter().fold(false, |acc, v| acc || v.is_nan())
+        })
+    }
 }
 
 impl fmt::Display for Line {

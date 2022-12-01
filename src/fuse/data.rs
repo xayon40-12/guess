@@ -8,14 +8,20 @@ pub struct Data {
 }
 
 impl Data {
-    pub fn new(folder: &str, filename: &str) -> Data {
+    pub fn new(folder: &str, filename: &str) -> Option<Data> {
         let lines = std::fs::read_to_string(&format!("{}/{}", folder, filename))
             .unwrap()
             .lines()
             .map(Line::from)
-            .collect();
-        Data { lines }
+            .collect::<Vec<_>>();
+        let is_nan = lines.iter().fold(false, |acc, l| acc || l.is_nan());
+        if is_nan {
+            None
+        } else {
+            Some(Data { lines })
+        }
     }
+
     pub fn finish(&mut self) {
         self.lines.iter_mut().for_each(|l| l.mean())
     }

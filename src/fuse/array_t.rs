@@ -11,6 +11,16 @@ pub enum ArrayT {
     WithCoord(f64, ValueT),
 }
 
+impl ArrayT {
+    pub fn is_nan(&self) -> bool {
+        match self {
+            ArrayT::Values(v) | ArrayT::WithCoord(_, v) => {
+                v.iter().fold(false, |acc, v| acc || v.is_nan())
+            }
+        }
+    }
+}
+
 impl Add<ArrayT> for ArrayT {
     type Output = ArrayT;
     fn add(self, rhs: ArrayT) -> Self::Output {

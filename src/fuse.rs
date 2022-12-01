@@ -69,7 +69,13 @@ impl Files {
             .for_each(|((dstname, mut dst), src)| {
                 let mut acc = folders
                     .clone()
-                    .fold(Data::new(&fst, &src), |acc, i| acc + Data::new(&i, &src));
+                    .fold(Data::new(&fst, &src), |acc, i| {
+                        match (acc, Data::new(&i, &src)) {
+                            (Some(a), Some(b)) => Some(a + b),
+                            (a, None) | (None, a) => a,
+                        }
+                    })
+                    .expect("All data contains NaN, nothing can be fused.");
                 acc.finish();
                 writeln!(dst, "{}", acc)
                     .unwrap_or_else(|_| panic!("Could not write to {}", dstname));
