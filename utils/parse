@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+
+import sys
+from parsec import *
+
+def compact(n):
+    def aggregate(x):
+        a = []
+        for i in range(n-1):
+            a = [x[1]]+a
+            x = x[0]
+        a = [x]+a
+        return a
+    return aggregate
+
+class Line:
+    def __init__(self, t, spec, name, moms):
+        self.t = t
+        self.spec = spec
+        self.name = name
+        self.moms = moms
+    
+    def __str__(self):
+        return "Line(t: " + str(self.t) + ", spec: " + str(self.spec) + ", name: " + str(self.name) + ", moms: " + str(self.moms) + ")"
+    
+    def __repr__(self):
+        return self.__str__()
+
+def toLine(a):
+    match a:
+        case [t,n,m]:
+            return Line(t,None,n,m)
+        case [t,s,n,m]:
+            return Line(t,s,n,m)
+            
+def single(v):
+    if len(v) == 1:
+        return v[0]
+    else:
+        return v
+    
+num = regex(r"\d+(\.\d+)?(e-?\d+)?").parsecmap(float)
+name = regex(r"[^|]+")
+vec = sepBy1(num, string(";")).parsecmap(single)
+value = (num + (string(":") >> vec)) ^ vec
+array = sepBy1(value, space()).parsecmap(single)
+moms = sepBy1(array, string("/")).parsecmap(single)
+p = string("|")
+sline = (num + (p >> name) + (p >> moms)).parsecmap(compact(3)).parsecmap(toLine)
+lline = (num + (p >> name) + (p >> name) + (p >> moms)).parsecmap(compact(4)).parsecmap(toLine)
+line = lline ^ sline
+
+def parse(s):
+    return line.parse(s.strip())
+
+def main() -> int:
+    if len(sys.argv) == 1:
+        for l in sys.stdin:
+            print(parse(l))
+    else:
+        with open(sys.argv[1], 'r') as f: 
+            for l in f.read().splitlines():
+                print(parse(l))
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())
