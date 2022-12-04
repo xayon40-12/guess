@@ -121,7 +121,8 @@ def extract(vals, path):
             return val
         else:
             (i,c) = near([v[0] for v in val],float(coord))
-            return [val[i][1:]]
+            return [val[i]]
+
     def extract_time(data):
         if time == '*':
             res = []
@@ -130,14 +131,14 @@ def extract(vals, path):
             return res
         else:
             (i,t) = near(data.t,float(time))
-            return extract_coord(data.val[i])
+            return [[float(t)]+v for v in extract_coord(data.val[i])]
             
     if name == '*':
         for (n,v) in vals.items():
             times = extract_time(v)
             return [[n]+ts for ts in times]
     else:
-        return extract_time(vals[name])
+        return [[name]+ts for ts in extract_time(vals[name])]
 
 def search_file(path):
     names = path.split("/")
