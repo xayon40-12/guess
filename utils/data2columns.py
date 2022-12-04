@@ -62,21 +62,6 @@ class Data:
     def __add__(self, other):
         return Data(self.t+other.t, self.count+other.count, self.val+other.val)
 
-none = string("").result(None)
-num = regex(r"\d+(\.\d+)?(e-?\d+)?").parsecmap(float)
-name = regex(r"[^|\n]+")
-vec = sepBy1(num, string(";"))
-value = ((num + (string(":") >> vec)) ^ (none + vec)).parsecmap(compact(2))
-array = sepBy1(value, string(" "))
-moms = sepBy1(array, string("/"))
-p = string("|")
-nl = string("\n")
-nup = num << p
-nap = name << p
-nuh = num << string("#")
-line = (nup + (count(nap, 2) ^ (none + nap)) + (nuh ^ none) + (moms << nl)).parsecmap(toLine)
-lines = many1(line)
-
 def moms2cols(moms):
     if moms[0][0][0] == None:
         cols = [[i]+[float(v) for v in vs[1]] for i,vs in enumerate(moms[0])]
@@ -98,8 +83,7 @@ def moms2cols(moms):
         cols = [c+m for c,m in zip(cols,remove_coord(m))]
     return cols
 
-def parse(s):
-    ls = (lines << eof()).parse(s)
+def toData(ls):
     fields = {}
     for l in ls:
         n = l.spec_name()
@@ -109,6 +93,25 @@ def parse(s):
         else:
             fields[n] = d
     return fields
+
+none = string("").result(None)
+num = regex(r"\d+(\.\d+)?(e-?\d+)?").parsecmap(float)
+name = regex(r"[^|\n]+")
+vec = sepBy1(num, string(";"))
+value = ((num + (string(":") >> vec)) ^ (none + vec)).parsecmap(compact(2))
+array = sepBy1(value, string(" "))
+moms = sepBy1(array, string("/"))
+p = string("|")
+nl = string("\n")
+nup = num << p
+nap = name << p
+nuh = num << string("#")
+line = (nup + (count(nap, 2) ^ (none + nap)) + (nuh ^ none) + (moms << nl)).parsecmap(toLine)
+lines = many1(line)
+data = (lines << eof()).parsecmap(toData)
+
+def parse(s):
+    return data.parse(s)
 
 def near(a,v):
     return min(enumerate(a), key=lambda x: abs(x[1]-v))
