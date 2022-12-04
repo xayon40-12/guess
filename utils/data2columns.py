@@ -152,12 +152,10 @@ def search_file(path):
         print("No file found in path \""+path+"\".")
         exit(-1)
 
-def parse_files(files):
-    obs = []
-    for (f, path) in map(search_file, files):
-        with open(f, 'r') as o:
-            obs += extract(parse(o.read()), path)
-    return obs
+def parse_file(file):
+    (f, path) = search_file(file)
+    with open(f, 'r') as o:
+        return extract(parse(o.read()), path)
 
 
 def main() -> int:
@@ -165,7 +163,7 @@ def main() -> int:
         print("Nothing to do.")
         return -1
     else:
-        for l in parse_files(sys.argv[1:]):
+        for l in parse_file(sys.argv[1]):
             print(' '.join([str(v) for v in l]))
         return 0
 
