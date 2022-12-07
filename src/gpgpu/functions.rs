@@ -202,7 +202,7 @@ pub fn fix_newton<'a>(
     do{{
         v = {f}(x{extra});
         old = x;
-        x = {constraint}(x-v*x*e/({f}(x*(1+e){extra})-v){extra});
+        x = {constraint}(x-v*e/({f}(x+e{extra})-v){extra});
         i++;
     }}while(i<{max} && fabs(old-x)>fmax(fabs(x),fabs(old))*e);
     if (i=={max}) {{
