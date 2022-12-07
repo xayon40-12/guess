@@ -1,13 +1,14 @@
 Param(
   data_files: Some([("../eos/hotQCD/p.txt","pp")]),
   init_file: Some(HDF5(file: "../init.h5", paths_names: [("/event_@ID", "e")])),
-  actions: [(RawData(["T11","T22","e"]), Interval(from: 1, to: 10.1, every: 0.1)),
+  actions: [(RawData(["T11","T22","e","ux","uy","ut"]), Interval(from: 1, to: 10.1, every: 0.1)),
             (Anisotropy([("T11","T22")]), Interval(from: 1, to: 10.1, every: 0.1))],
-  config: (t_0: Some(1), t_max: 4, dim: D2S((@N,@L))),
+  config: (t_0: Some(1), t_max: 8, dim: D2S((@N,@L))),
   integrator: Implicit(dt_max: @ER, dt_factor: Some(1.05), er: @ER, scheme: Euler),
   symbols: "
       // the e0, small and p(e) are needed to extropolate the pressure down to e=0 because the data file stops at e0
       e0 := 0.00038919
+      emax := 190
       small(e,v1,v2) := e<e0?v1:v2
       p(e) = small(e,pp(e0)*e/e0,pp(e))
       eps := 1e-10
@@ -15,6 +16,8 @@ Param(
       eigk(e,ut,uk) = fabs((fabs(ut*uk*(1-vs2)) + sqrt((ut*ut-uk*uk - (ut*ut-uk*uk - 1)*vs2)*vs2))/(ut*ut - (ut*ut-1)*vs2))
       vk(ut,uk) = fabs(uk/ut)
       eig(e,ut,uk) = fmax(eigk(e,ut,uk),vk(ut,uk))
+      um = 1e7
+      us = 1/um**2
       f00(e,t,ut,ux,uy) = ((e+p(e))*ut*ut - p(e))
       f10(e,t,ut,ux,uy) = ((e+p(e))*ux*ut)
       f20(e,t,ut,ux,uy) = ((e+p(e))*uy*ut)
@@ -24,14 +27,16 @@ Param(
       f22(e,t,ut,ux,uy) = ((e+p(e))*uy*uy + p(e))
       f33(e,t,ut,ux,uy) = p(e)
       vars := e,t,ut,ux,uy
-      tT00' = -t*(#KT_x[eigx](f10(vars)) + #KT_y[eigy](f20(vars))) - f33(vars) 
-      tT01' = -t*(#KT_x[eigx](f11(vars)) + #KT_y[eigy](f21(vars)))
-      tT02' = -t*(#KT_x[eigx](f12(vars)) + #KT_y[eigy](f22(vars)))
-      e'| = (tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*p(e)))/t
-      e'c = fmin(fmax(e,1e-15),1)
-      ut'c = fmin(fmax(sqrt((tT00/t+p(e))/(e+p(e))), 1), 1e7)
-      ux'c = tT01/((e+p(e))*ut*t)
-      uy'c = tT02/((e+p(e))*ut*t)
+      tT00' = -(#KT_x[eigx](t*f10(vars)) + #KT_y[eigy](t*f20(vars))) - f33(vars) 
+      tT01' = -(#KT_x[eigx](t*f11(vars)) + #KT_y[eigy](t*f21(vars)))
+      tT02' = -(#KT_x[eigx](t*f12(vars)) + #KT_y[eigy](t*f22(vars)))
+      tT00'c = fmax(tT00, sqrt(tT01*tT01+tT02*tT02))
+      e'| = ifNaNInf((tT00 - (tT01*tT01 + tT02*tT02)/(tT00+t*p(e)))/t, 0)
+      ll(aa,bb,cc,dd) := ((aa<=bb)?cc:dd)
+      e'c = fmin(ll(e,us,0,e),emax)
+      ut'c = fmin(fmax(ifNaNInf(sqrt((tT00/t+p(e))/(e+p(e))), um), 1), um)
+      ux'c = ifNaNInf(tT01/((e+p(e))*ut*t),um/sqrt(2))
+      uy'c = ifNaNInf(tT02/((e+p(e))*ut*t),um/sqrt(2))
       T11'c = f11(vars)
       T22'c = f22(vars)
       eigx'c = eig(e,ut,ux)
