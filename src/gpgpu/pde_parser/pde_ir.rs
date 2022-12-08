@@ -183,27 +183,27 @@ impl SPDETokens {
         }
     }
 
-    fn indexables(&self) -> Vec<Indexable> {
-        use SPDETokens::*;
-        let all = |a: Option<SPDETokens>, s: Vec<SPDETokens>| {
-            let mut ai = a.map(|i| i.indexables()).unwrap_or_default();
-            s.iter().for_each(|i| ai.append(&mut i.indexables()));
-            ai
-        };
-        match self.clone().convert() {
-            // the result under asume that everything as been converted so the .convert() is needed to guaranty the asumption
-            Add(a, s, _) => all(Some(*a), s),
-            Sub(a, b, _) => all(None, vec![*a, *b]),
-            Mul(a, s, _) => all(Some(*a), s),
-            Div(a, b, _) => all(None, vec![*a, *b]),
-            Pow(a, b, _) => all(None, vec![*a, *b]),
-            Func(_, v, _) => all(None, v),
-            Symb(..) => vec![],
-            Const(..) => vec![],
-            Vect(v, _) => all(None, v),
-            Indx(i) => vec![i],
-        }
-    }
+    // fn indexables(&self) -> Vec<Indexable> {
+    //     use SPDETokens::*;
+    //     let all = |a: Option<SPDETokens>, s: Vec<SPDETokens>| {
+    //         let mut ai = a.map(|i| i.indexables()).unwrap_or_default();
+    //         s.iter().for_each(|i| ai.append(&mut i.indexables()));
+    //         ai
+    //     };
+    //     match self.clone().convert() {
+    //         // the result under asume that everything as been converted so the .convert() is needed to guaranty the asumption
+    //         Add(a, s, _) => all(Some(*a), s),
+    //         Sub(a, b, _) => all(None, vec![*a, *b]),
+    //         Mul(a, s, _) => all(Some(*a), s),
+    //         Div(a, b, _) => all(None, vec![*a, *b]),
+    //         Pow(a, b, _) => all(None, vec![*a, *b]),
+    //         Func(_, v, _) => all(None, v),
+    //         Symb(..) => vec![],
+    //         Const(..) => vec![],
+    //         Vect(v, _) => all(None, v),
+    //         Indx(i) => vec![i],
+    //     }
+    // }
 
     fn is_indexable(&self) -> bool {
         use SPDETokens::*;
