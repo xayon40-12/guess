@@ -160,6 +160,37 @@ pub fn functions() -> HashMap<&'static str, Function<'static>> {
             src: "    if(x!=x || isinf(x)) { return x; } else { if(y!=y || isinf(y)) { return y; } else { return fmax(x,y); } }",
             needed: vec![],
         },
+        Function {
+            name: "minmod",
+            args: vec![FCParam("a",CF64),FCParam("b",CF64)],
+            ret_type: Some(CF64),
+            src: "    return (sign(a)+sign(b))*0.5*fmin(fabs(a),fabs(b));",
+            needed: vec![],
+        },
+        Function {
+            name: "minmod3",
+            args: vec![FCParam("a",CF64),FCParam("b",CF64),FCParam("c",CF64)],
+            ret_type: Some(CF64),
+            src: "    return minmod(a,minmod(b,c));",
+            needed: vec![Needed::FuncName("minmod")],
+        },
+        Function {
+            name: "dir2",
+            args: vec![FCGlobalPtr("a", CF64),FCParam("did",CI32),FCParam("x",CI32),FCParam("y",CI32)],
+            ret_type: Some(CF64),
+            src: "    double dxy[2] = {0}; double v;
+    for(int j=-2;j<=2;j++){
+        for(int i=-2;i<=2;i++){
+            if(i!=0 || j!=0){
+                v=ghost(x+i,y+j,0,1,a)/(i*i+j*j);
+                dxy[0] += i*v;
+                dxy[1] += j*v;
+            }
+        }
+    };
+    return ifNaNInf(dxy[did]/sqrt(dxy[0]*dxy[0]+dxy[1]*dxy[1]),0);",
+            needed: vec![],
+        },
 
     ].into_iter().map(|f| (f.name,f)).collect()
 }
@@ -204,7 +235,7 @@ pub fn fix_newton<'a>(
         old = x;
         x = {constraint}(x-v*e/({f}(x+e{extra})-v){extra});
         i++;
-    }}while(i<{max} && fabs(old-x)>fmax(fabs(x),fabs(old))*e);
+    }}while(i<{max} && fabs(old-x)>fmax(fabs(x),fabs(old))*e && v<e);
     if (i=={max}) {{
         return 0.0/0.0;
     }}

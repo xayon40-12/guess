@@ -107,7 +107,7 @@ nup = num << p
 nap = name << p
 nuh = num << string("#")
 line = (nup + (count(nap, 2) ^ (none + nap)) + (nuh ^ none) + (moms << nl)).parsecmap(toLine)
-lines = many1(line)
+lines = many1(line << many(nl))
 data = (lines << eof()).parsecmap(toData)
 
 def parse(s):

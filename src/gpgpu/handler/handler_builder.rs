@@ -75,6 +75,20 @@ impl HandlerBuilder {
         let needed = function.needed;
         function.needed = vec![];
 
+        for n in needed {
+            self = match n {
+                FSNeeded::FuncName(name) => {
+                    if !self.existing_functions.contains_key(&name) {
+                        self.load_function(&name)
+                    } else {
+                        self
+                    }
+                }
+                FSNeeded::CreateFunc(func) => {
+                    self.add_function(func, None, Some(format!("function \"{}\"", name)))
+                }
+            }
+        }
         if let Some(as_name) = as_name {
             if let Some(from) = self.existing_functions.get(&as_name) {
                 panic!(
@@ -100,21 +114,6 @@ impl HandlerBuilder {
                 .insert(name.clone(), from.unwrap_or("".into())); //TODO verify if empty string here causes problem
             self.functions.push((name.clone(), function));
         }
-        for n in needed {
-            self = match n {
-                FSNeeded::FuncName(name) => {
-                    if !self.existing_functions.contains_key(&name) {
-                        self.load_function(&name)
-                    } else {
-                        self
-                    }
-                }
-                FSNeeded::CreateFunc(func) => {
-                    self.add_function(func, None, Some(format!("function \"{}\"", name)))
-                }
-            }
-        }
-
         self
     }
 

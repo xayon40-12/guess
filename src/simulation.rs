@@ -20,6 +20,13 @@ use crate::gpgpu::{
     Dim::{self, *},
     DimDir,
 };
+use nom::bytes::complete::is_not;
+use nom::bytes::complete::tag;
+use nom::character::complete::space0;
+use nom::multi::separated_list1;
+use nom::sequence::preceded;
+use nom::sequence::terminated;
+use nom::IResult;
 use std::any::Any;
 use std::io::Write;
 
@@ -31,6 +38,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 pub mod parameters;
 use hdf5::types::VarLenUnicode;
 use itertools::Itertools;
+use nom::sequence::delimited;
 use parameters::Noises::{self, *};
 pub use parameters::{
     ActivationCallback, Callback, EqDescriptor, Explicit, Implicit, Integrator, Param,
@@ -464,6 +472,7 @@ fn extract_symbols(
     h = h.load_kernel("moments_to_cumulants");
     h = h.load_kernel("anisotropy");
     h = h.load_function("ifNaNInf");
+    h = h.load_function("minmod3");
     h = h.load_function("ifelse");
     h = h.load_function("lessthan");
     h = h.load_function("fmaxNaNInf");
@@ -1081,6 +1090,7 @@ fn extract_symbols(
     //h = h.add_buffer("dstFFT", Len(F64_2([0.0, 0.0]), len * max));
     //h = h.add_buffer("initFFT", Len(F64_2([0.0, 0.0]), len * max));
 
+    h = h.load_function("dir2");
     let mut handler = h.build()?;
     if init_kernels.len() > 0 {
         let noise_dim = |dim: &Option<usize>| D1(len * if let Some(d) = dim { *d } else { 1 });
@@ -1262,6 +1272,14 @@ fn gen_init_kernel(
         );
     }
     gen_single_stage_kernel(name, args, ini)
+}
+
+fn vec(s: &str) -> IResult<&str, Vec<&str>> {
+    delimited(
+        preceded(space0, tag("(")),
+        separated_list1(tag(";"), is_not(";")),
+        terminated(tag(")"), space0),
+    )(s)
 }
 
 fn parse_symbols(
@@ -1505,11 +1523,9 @@ fn parse_symbols(
                         let src = replace(&caps[3], &consts);
                 let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
                         let ($expr,$priors) = if &caps[2] == ":" {
-                            if src.starts_with("(") && src.ends_with(")") {
-                                let expr = src[1..src.len() - 1]
-                                    .split(";")
-                                    .map(|i| i.trim().to_string())
-                                    .collect::<Vec<_>>();
+                            if let Ok(("",expr)) = vec(src.as_str()) {
+                            println!("expr: {:?}", expr);
+                                let expr = expr.into_iter().map(|i| i.trim().to_string()).collect::<Vec<_>>();
                                 if expr.len() != vec_dim {
                                     panic!(
                                         "The vectorial dim={} of '{}' is different from de dim={} parsed.",
@@ -1536,11 +1552,8 @@ fn parse_symbols(
                         let src = replace(&caps[4], &consts);
                 let vec_dim = hdpdes.get(&$name).expect(&format!("Unknown field \"{}\", it should be listed in the field \"fields\" in the parameter file.", &$name)).vec_dim;
                         let ($expr,$priors) = if &caps[3] == ":" {
-                            if src.starts_with("(") && src.ends_with(")") {
-                                let expr = src[1..src.len() - 1]
-                                    .split(";")
-                                    .map(|i| i.trim().to_string())
-                                    .collect::<Vec<_>>();
+                            if let Ok(("",expr)) = vec(src.as_str()) {
+                                let expr = expr.into_iter().map(|i| i.trim().to_string()).collect::<Vec<_>>();
                                 if expr.len() != vec_dim {
                                     panic!(
                                         "The vectorial dim={} of '{}' is different from de dim={} parsed.",

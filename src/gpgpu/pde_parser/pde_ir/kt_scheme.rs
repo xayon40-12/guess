@@ -8,7 +8,7 @@ pub fn kt(
     d: usize,
 ) -> SPDETokens {
     let iv = Symb(["ivdx", "ivdy", "ivdz"][d].into());
-    (h(u, fu, eigs, theta, d, 1) - h(u, fu, eigs, theta, d, -1)) * iv
+    (h(u, fu, eigs, theta, d, 1) - h(u, fu, eigs, theta, d, -1)) * iv * Const(0.5)
 }
 
 pub fn h(
@@ -21,13 +21,9 @@ pub fn h(
 ) -> SPDETokens {
     let p = &idx(1, idir, d);
     let m = &idx(-1, idir, d);
-    let min = |a, b| func("min", vec![a, b]);
     let max = |a, b| func("max", vec![a, b]);
     let abs = |a| func("fabs", vec![a]);
-    let sign = |a| func("sign", vec![a]);
-    let minmod = |a: SPDETokens, b: SPDETokens| {
-        (sign(a.clone()) + sign(b.clone())) * Const(0.5) * min(abs(a), abs(b))
-    };
+    let minmod = |a, b, c| func("minmod3", vec![a, b, c]);
     let ud = |i: i32| {
         let mut id = [0; 4];
         id[d] = i;
@@ -40,7 +36,8 @@ pub fn h(
         let uc = u;
         minmod(
             Const(theta) * (uc.clone() - um.clone()),
-            minmod((up.clone() - um) * Const(0.5), Const(theta) * (up - uc)),
+            (up.clone() - um) * Const(0.5),
+            Const(theta) * (up - uc),
         )
     };
     let up = |u: Indexable| {
@@ -65,7 +62,7 @@ pub fn h(
             panic!("No eigenvalues provided.")
         }
     };
-    (ap(fu, up) + ap(fu, um) - a(eigs) * (ap(u, up) - ap(u, um))) * Const(0.5)
+    ap(fu, up) + ap(fu, um) - a(eigs) * (ap(u, up) - ap(u, um))
 }
 fn ap(u: &SPDETokens, f: impl Fn(Indexable) -> SPDETokens) -> SPDETokens {
     u.clone().apply_indexable(&f)

@@ -35,6 +35,18 @@ use super::var::aanum;
 use super::CURRENT_VAR;
 use super::DATA_BUFS;
 
+pub fn lit(s: &str) -> IResult<&str, LexerComp> {
+    preceded(tag("lit"), delimited(char('('), aanum, char(')')))(s).map(|(s, v)| {
+        (
+            s,
+            LexerComp {
+                token: SPDETokens::Symb(v),
+                funs: vec![],
+                max_space_derivative_depth: 0,
+            },
+        )
+    })
+}
 // fix[e,max_iter]<func_name, constraint_name, init>(params...)
 pub fn fix(s: &str) -> IResult<&str, LexerComp> {
     let e = preceded(tag("e="), double);
@@ -231,5 +243,5 @@ fn bf_diff_constructor(
 }
 
 pub fn fun(s: &str) -> IResult<&str, LexerComp> {
-    alt((fix, kt_diff, fun_call, bf_diff, term))(s)
+    alt((lit, fix, kt_diff, fun_call, bf_diff, term))(s)
 }

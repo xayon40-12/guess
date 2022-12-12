@@ -596,10 +596,10 @@ fn multistages_algorithm(
                                     args[i+1] = BufArg(&bufs[nb_per_stages * i + pos], &vars_names[i]);
                                     args[i+1+vars.len()] = BufArg(&bufs[nb_per_stages * i], &o_vars_names[i]);
                                 }
-                                h.run_arg(constraint_name, D1(d * vars[i].2), &args)?;
+                                h.run_arg(constraint_name, dim, &args)?;
                             }
                         }
-                        for (name,vect_dim) in &pure_constraints {
+                        for (name,_vect_dim) in &pure_constraints {
                             args[0] = BufArg(name, "dst");
                             for i in 0..vars.len() {
                                 let pos = if ($s == nb_stages && $pred.contains(&i)) || (!implicit && !is_accuracy && $s == 0 && !$pred.contains(&i)) {
@@ -610,7 +610,7 @@ fn multistages_algorithm(
                                 args[i+1] = BufArg(&bufs[nb_per_stages * i + pos], &vars_names[i]);
                                 args[i+1+vars.len()] = BufArg(&bufs[nb_per_stages * i], &o_vars_names[i]);
                             }
-                            h.run_arg(&name, D1(d * vect_dim), &args)?;
+                            h.run_arg(&name, dim, &args)?;
                         }
                     };
                 }
