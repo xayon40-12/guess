@@ -268,30 +268,21 @@ impl SPDETokens {
         let app =
             |(e, m): (String, HashMap<String, String>), f: &dyn Fn(String) -> String| (f(e), m);
         macro_rules! foldop {
-            ($a:ident, $b:ident, $ext:literal, $op:tt) => {
-                app(
-                    $b.into_iter()
-                        .map(|i| i._to_ocl(compact))
-                        .fold($a._to_ocl(compact), |u, v| {
-                            app2(fuse(u, v), &|(u, v)| {
-                                format!("{} {} {}", u, stringify!($op), v)
-                            })
-                        }),
-                    &|a: String| format!($ext, a),
-                )
-            };
-            (par $a:ident $op:tt $b:ident) => {
-                foldop!($a, $b, "({})", $op)
-            };
             ($a:ident $op:tt $b:ident) => {
-                foldop!($a, $b, "{}", $op)
+                $b.into_iter()
+                    .map(|i| i._to_ocl(compact))
+                    .fold($a._to_ocl(compact), |u, v| {
+                        app2(fuse(u, v), &|(u, v)| {
+                            format!("({}) {} ({})", u, stringify!($op), v)
+                        })
+                    })
             };
         }
         match self {
-            Add(a, b, _) => foldop!(par a + b),
-            Sub(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("({} - ({}))", a, b)),
+            Add(a, b, _) => foldop!(a + b),
+            Sub(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("({}) - ({})", a, b)),
             Mul(a, b, _) => foldop!(a * b),
-            Div(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("{} / ({})", a, b)),
+            Div(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("({}) / ({})", a, b)),
             Pow(a, b, _) => app2(fuses(*a, *b), &|(a, b)| format!("pow({},{})", a, b)),
             Func(n, a, _) => {
                 if a.len() == 0 {
@@ -343,7 +334,7 @@ impl SPDETokens {
                 let b = $b.optimize();
                 if let (Const(a),Const(b)) = (a.clone(),b.clone()) { Const(a $op b) } else { $Op(Box::new(a),Box::new(b),true) }
             }};
-            ($a:ident $op:tt vec $b:ident, $Op:ident) => {{ // NOTE here the vec b should be a monoid
+            ($a:ident $op:tt $neutral:tt $b:ident, $Op:ident) => {{ // NOTE here the vec b should be a monoid
                 let mut consts = vec![];
                 let mut rest = vec![];
                 let a = $a.optimize();
@@ -362,9 +353,9 @@ impl SPDETokens {
                 }
                 if consts.len() > 0 {
                     if rest.len() > 0{
-                        $Op(Box::new(Const(consts.into_iter().fold(1.0, |a,i| a*i))), rest, true)
+                        $Op(Box::new(Const(consts.into_iter().fold($neutral, |a,i| a $op i))), rest, true)
                     } else {
-                        Const(consts.into_iter().fold(1.0, |a,i| a*i))
+                        Const(consts.into_iter().fold($neutral, |a,i| a $op i))
                     }
                 } else {
                     let a = rest.remove(0);
@@ -374,9 +365,9 @@ impl SPDETokens {
         }
         let c = self.convert();
         match c {
-            Add(a, b, _) => op! {a + vec b, Add},
+            Add(a, b, _) => op! {a + 0.0 b, Add},
             Sub(a, b, _) => op! {a - b, Sub},
-            Mul(a, b, _) => op! {a * vec b, Mul},
+            Mul(a, b, _) => op! {a * 1.0 b, Mul},
             Div(a, b, _) => op! {a / b, Div},
             Pow(a, b, _) => {
                 let a = a.optimize();
